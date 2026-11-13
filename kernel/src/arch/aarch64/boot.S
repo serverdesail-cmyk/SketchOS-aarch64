@@ -48,6 +48,28 @@ _start:
     lsr     x19, x19, #2
     and     x19, x19, #3
 
+    /*
+     * Install a valid vector base before touching BSS or changing cache/MMU
+     * state. Otherwise a synchronous fault in the first instructions vectors
+     * through firmware's unknown VBAR and is effectively silent. The full
+     * vector table uses SIMD registers, so grant FP access before enabling it.
+     */
+    cmp     x19, #2
+    b.hi    1f
+    adrp    x9, exception_vectors
+    add     x9, x9, :lo12:exception_vectors
+    msr     vbar_el1, x9
+    cmp     x19, #2
+    b.ne    1f
+    msr     vbar_el2, x9
+    mrs     x10, cptr_el2
+    bic     x10, x10, #(1 << 10)    /* TFP: allow Q-register saves in EL2 vectors */
+    msr     cptr_el2, x10
+1:
+    mov     x9, #(3 << 20)          /* CPACR_EL1.FPEN = 0b11 */
+    msr     cpacr_el1, x9
+    isb
+
     /* Load the translation plan before any register is reused. */
     ldr     x21, [x20, #BOOT_TTBR0_ROOT]
     ldr     x22, [x20, #BOOT_TTBR1_ROOT]
