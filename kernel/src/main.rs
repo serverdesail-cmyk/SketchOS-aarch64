@@ -75,6 +75,23 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
         console::init(info.uart_base);
     }
 
+    // The loader has already mapped GOP into the higher-half physical map.
+    // Start the framebuffer console before ACPI/MMU work so early kernel entry
+    // is visible even when firmware only describes an unsupported Qualcomm UART.
+    let mut framebuffer_console = false;
+    if info.has_flag(FLAG_FRAMEBUFFER) {
+        match console::init_framebuffer(&info.framebuffer) {
+            Ok(()) => framebuffer_console = console::framebuffer_active(),
+            Err(reason) => println!("Early framebuffer console unavailable: {}", reason),
+        }
+    }
+    println!();
+    println!("KERNEL: entry reached");
+    println!(
+        "KERNEL: early framebuffer console {}",
+        if framebuffer_console { "active" } else { "unavailable" }
+    );
+
     let counter_frequency = arch::aarch64::counter_frequency();
     let start_ticks = arch::aarch64::counter();
 
@@ -85,20 +102,6 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
     // Replace the firmware map with kernel-owned tables. A failure is not
     // fatal: the kernel continues under the firmware map and reports why.
     let mmu_result = arch::aarch64::mmu::init(&info, platform.as_ref());
-
-    // The framebuffer is initialized after the MMU so the console draws through
-    // the final Normal Non-cacheable mapping rather than the firmware's.
-    let mut framebuffer_console = false;
-    if info.has_flag(FLAG_FRAMEBUFFER) {
-        match console::init_framebuffer(&info.framebuffer) {
-            Ok(()) => framebuffer_console = console::framebuffer_active(),
-            Err(reason) => {
-                // The UART may not exist on this machine, so this line can be
-                // invisible on real hardware. It is still useful under QEMU.
-                println!("Framebuffer console unavailable: {}", reason);
-            }
-        }
-    }
 
     println!();
     println!("SketchOS kernel 0.0.7 (AArch64)");

@@ -1,8 +1,8 @@
 # Milestone 0.0.7: persistent boot and explicit shutdown
 
 **Status:** boot flow reorganized on `milestone-0.0.7-persistent-shell`; CI ISO build
-is triggered by source changes. Physical-hardware and interactive-input support
-are not verified.
+is triggered by source changes. The UEFI loader and kernel both identify as
+0.0.7. Physical-hardware and interactive-input support are not verified.
 
 ## Behavior change
 
@@ -24,6 +24,25 @@ The automated QEMU smoke test has a separate `smoke-test` feature. Only that
 dedicated build retains automatic QEMU shutdown so the test runner can detect
 completion. Fatal pre-scheduler and userspace-setup paths are similarly gated
 to the smoke-test feature.
+
+## Boot transition diagnostics
+
+The loader draws progress text directly into the GOP framebuffer, including
+after `ExitBootServices` when UEFI text services are unavailable. Checkpoints:
+
+- `HANDOFF: PREPARING`
+- `HANDOFF: EXITING UEFI`
+- `HANDOFF: UEFI EXITED`
+- `HANDOFF: MEMORY MAP OK`
+- `HANDOFF: PAGE TABLES BUILT`
+- `HANDOFF: ENTERING KERNEL`
+- `KERNEL: entry reached`
+
+The kernel activates the framebuffer console immediately on entry, before
+ACPI discovery and MMU reinitialization. The last visible checkpoint will help
+separate a loader failure from a page-table, assembly-entry, or early Rust
+failure. These messages are diagnostic instrumentation, not proof of a
+successful physical boot.
 
 ## Shell
 
