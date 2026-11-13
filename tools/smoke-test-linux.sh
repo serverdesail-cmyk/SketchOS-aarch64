@@ -35,6 +35,7 @@ rm -f "$LOG"
 set +e
 timeout --signal=TERM --kill-after=10s 180s "$QEMU" \
   -machine virt,gic-version=3 \
+  -boot order=d \
   -cpu max -smp 8 -m 2048 \
   -drive if=pflash,format=raw,readonly=on,file="$CODE" \
   -drive if=pflash,format=raw,file="$VARS" \
