@@ -261,6 +261,8 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
         micros, elapsed, counter_frequency
     );
 
+    println!("BOOT STAGE: inventory complete; installing ACPI platform");
+
     // The interrupt controller, timer, memory allocators and SMP startup
     // require an ACPI description and EL1. A failure here is fatal to the
     // milestone because the kernel has no other way to regain control.
@@ -269,10 +271,12 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
         None => fatal(&info, None, "no ACPI platform description"),
     };
 
+    println!("BOOT STAGE: ACPI platform installed");
     smp::set_qemu(info.has_flag(FLAG_QEMU_VIRT));
 
     // Physical memory and the kernel heap are brought up before any secondary
     // is started. The boot self-tests release every allocation they make.
+    println!("BOOT STAGE: initializing physical memory allocator");
     if let Err(_reason) = phys::init(&info, boot_info_addr) {
         fatal(
             &info,
@@ -280,6 +284,7 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
             "physical allocator initialization failed",
         );
     }
+    println!("BOOT STAGE: physical allocator ready; running memory self-test");
     if let Err(reason) = selftest::physical(&info, boot_info_addr) {
         fatal(&info, Some(platform), reason);
     }
@@ -287,6 +292,7 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
     // Exercise a real user address space (fresh TTBR0 root plus ASID) while the
     // bootstrap identity root is still installed. The self-test restores the
     // root before returning, so sealing TTBR0 later is safe.
+    println!("BOOT STAGE: memory self-test passed; checking address spaces");
     match arch::aarch64::mmu::address_space_self_test() {
         Ok(()) => println!("MMU: address-space self-test passed (ASID switch and user page)"),
         Err(reason) => fatal(&info, Some(platform), reason),
@@ -295,6 +301,7 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
     // Prove the recoverable-fault path on the installed map: an unmapped read,
     // a write to read-only text and an execute from writable data must all be
     // caught and resumed instead of halting the core.
+    println!("BOOT STAGE: address-space self-test passed; checking fault recovery");
     match arch::aarch64::mmu::fault_self_test() {
         Ok(()) => println!(
             "MMU: fault self-test passed (unmapped read, read-only write, NX execute)"
@@ -302,12 +309,14 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
         Err(reason) => fatal(&info, Some(platform), reason),
     }
 
+    println!("BOOT STAGE: fault recovery passed; initializing heap");
     if let Err(reason) = heap::init() {
         fatal(&info, Some(platform), reason);
     }
     if let Err(reason) = selftest::heap_test() {
         fatal(&info, Some(platform), reason);
     }
+        println!("BOOT STAGE: heap ready; probing devices");
         storage::probe();
         net::probe();
         drm::init();
@@ -319,16 +328,19 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
 
     // Discover every enabled MADT processor and install this core's per-core
     // pointer before the GIC or the scheduler needs it.
+    println!("BOOT STAGE: device probes complete; discovering CPUs");
     if let Err(reason) = smp::discover(platform) {
         fatal(&info, Some(platform), reason);
     }
     topology::init(platform);
 
+    println!("BOOT STAGE: CPU topology ready; initializing interrupt controller");
     if let Err(reason) = arch::aarch64::gic::init(platform) {
         fatal(&info, Some(platform), reason);
     }
     arch::aarch64::gic::report();
 
+    println!("BOOT STAGE: interrupt controller ready; initializing timer");
     if let Err(reason) = arch::aarch64::timer::init() {
         fatal(&info, Some(platform), reason);
     }
@@ -337,9 +349,11 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
     // Publish the translation state and clean the kernel image, then start the
     // secondaries. Each secondary initializes its own GIC redistributor and
     // timer and reports online before waiting for the scheduler release.
+    println!("BOOT STAGE: timer ready; preparing secondary CPUs");
     if let Err(reason) = smp::prepare(&info) {
         fatal(&info, Some(platform), reason);
     }
+    println!("BOOT STAGE: starting secondary CPUs");
     smp::start_secondaries();
     smp::report();
     topology::report();
@@ -358,11 +372,13 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
     arch::aarch64::mmu::seal_low_half();
     println!("MMU: TTBR0 walks disabled; low half sealed");
 
+    println!("BOOT STAGE: SMP online; initializing scheduler");
     if let Err(reason) = sched::init() {
         fatal(&info, Some(platform), reason);
     }
     sched::report();
 
+    println!("BOOT STAGE: scheduler ready; releasing CPUs");
     smp::release_scheduler();
     sched::start()
 }
