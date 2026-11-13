@@ -38,6 +38,10 @@ The shell currently supports:
 - `mkfs`
 - `poweroff`
 
+Storage and partition commands report that probing is deferred in this
+early-shell profile; they do not touch storage hardware during boot. The
+full diagnostic profile retains the existing device-probe sequence.
+
 Input is polling-based and currently reads only a firmware-described PL011
 receive FIFO. The shell is not a USB keyboard driver and does not yet accept
 input from the HP OmniBook X's Qualcomm UART.
