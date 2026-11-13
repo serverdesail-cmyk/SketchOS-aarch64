@@ -12,7 +12,7 @@ fi
 
 find_first() {
   local pattern="$1"
-  find /usr/share -type f -iname "$pattern" -print -quit 2>/dev/null || true
+  find /usr/share \\( -type f -o -type l \\) -iname "$pattern" -print -quit 2>/dev/null || true
 }
 
 CODE="${AAVMF_CODE:-$(find_first AAVMF_CODE.fd)}"
