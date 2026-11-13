@@ -32,8 +32,7 @@
 
     /* Linux arm64's baseline SCTLR_EL1 RES1 bits. Do not inherit an unknown
      * EL1 control-register value when UEFI entered at EL2. */
-    .equ SCTLR_EL1_RES1,         0x30500800
-    .equ SCTLR_EL1_MMU_ON,       0x30501805
+    .equ SCTLR_EL1_RES1,         0x30d00800
 
     .section ".text._start", "ax"
     .global _start
@@ -71,6 +70,29 @@ _start:
     b       1b
 
 2:
+    /*
+     * The BSS clear above may leave dirty cache lines. Clean+invalidate the
+     * identity-mapped physical range to PoC before SCTLR.C is cleared, or the
+     * zeroing can be lost when the data cache is disabled.
+     */
+    mrs     x4, ctr_el0
+    ubfx    x4, x4, #16, #4
+    mov     x5, #4
+    lsl     x5, x5, x4
+    adrp    x2, __bss_start
+    add     x2, x2, :lo12:__bss_start
+    adrp    x3, __bss_end
+    add     x3, x3, :lo12:__bss_end
+    bic     x2, x2, x5
+3:
+    cmp     x2, x3
+    b.hs    4f
+    dc      civac, x2
+    add     x2, x2, x5
+    b       3b
+4:
+    dsb     sy
+
     cmp     x19, #2
     b.eq    el2_setup
     cmp     x19, #1
@@ -175,7 +197,7 @@ el1_install:
      * When called from EL2, these writes prepare the inactive EL1 regime.
      */
     movz    x9, #0x0800
-    movk    x9, #0x3050, lsl #16   /* RES1, EE=0, E0E=0, M/C/I=0 */
+    movk    x9, #0x30d0, lsl #16   /* SCTLR_EL1_RES1, EE=0, E0E=0, M/C/I=0 */
     msr     sctlr_el1, x9
     dsb     sy
     isb
@@ -195,7 +217,7 @@ el1_install:
      * minimal Linux-style AArch64 baseline: RES1 plus M/C/I, little-endian,
      * with optional controls left disabled until the kernel configures them. */
     movz    x9, #0x1805
-    movk    x9, #0x3050, lsl #16   /* RES1 | M | C | I */
+    movk    x9, #0x30d0, lsl #16   /* SCTLR_EL1_RES1 | M | C | I */
     msr     sctlr_el1, x9
     isb
     ret
