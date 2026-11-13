@@ -32,7 +32,7 @@
 
     /* Linux arm64's baseline SCTLR_EL1 RES1 bits. Do not inherit an unknown
      * EL1 control-register value when UEFI entered at EL2. */
-    .equ SCTLR_EL1_RES1,         0x30d00800
+    .equ SCTLR_EL1_RES1,         0x30500800
 
     .section ".text._start", "ax"
     .global _start
@@ -198,7 +198,7 @@ el1_install:
      * When called from EL2, these writes prepare the inactive EL1 regime.
      */
     movz    x9, #0x0800
-    movk    x9, #0x30d0, lsl #16   /* SCTLR_EL1_RES1, EE=0, E0E=0, M/C/I=0 */
+    movk    x9, #0x3050, lsl #16   /* SCTLR_EL1_RES1, EE=0, E0E=0, M/C/I=0 */
     msr     sctlr_el1, x9
     dsb     sy
     isb
