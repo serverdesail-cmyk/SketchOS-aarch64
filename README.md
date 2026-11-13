@@ -13,14 +13,17 @@ and every change is validated in QEMU before it is considered working.
 
 ## Project status
 
-**Milestone 0.0.6 is verified under QEMU** (2026-11-12). The 0.0.8 diagnostic image is being built for physical boot investigation; it is not hardware-verified.
+**Milestone 0.0.6 is verified under QEMU** (2026-11-12). The 0.0.9 diagnostic image adds assembly-stage framebuffer markers and a Rust-entry/boot-info validation report; it is not hardware-verified.
 
 The 0.0.7 development branch adds a persistent lifecycle, early boot-transition
-framebuffer diagnostics, and an early PL011-serial bring-up shell. The normal
+framebuffer diagnostics, and an early PL011-serial bring-up shell. The 0.0.9
+diagnostic revision paints distinct framebuffer markers before the MMU switch,
+after EL1 translation activation, and at the higher-half continuation; it also
+reports Rust entry before strict boot-info validation. The normal
 shell build skips optional device probes and the scheduler/EL0 benchmark path.
 The branch ISO is rebuilt by GitHub Actions after source changes; physical
 laptop boot and interactive input are not hardware-verified yet. See
-[docs/milestone-0.0.8.md](docs/milestone-0.0.8.md). The laptop's Qualcomm UART,
+[docs/milestone-0.0.9.md](docs/milestone-0.0.8.md). The laptop's Qualcomm UART,
 USB keyboard and ACPI power-button event path are still unsupported. The kernel now runs an
 EEVDF scheduler with one run queue per core, cluster-aware work stealing driven
 by ACPI PPTT, one-shot per-core `CNTP` timers with tickless idle, a debug-only
