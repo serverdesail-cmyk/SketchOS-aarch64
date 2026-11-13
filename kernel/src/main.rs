@@ -317,6 +317,12 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
         fatal(&info, Some(platform), reason);
     }
 
+    // Discover the boot CPU and publish the firmware PSCI conduit before any
+    // normal-build shell command can request an explicit power-off.
+    if let Err(reason) = smp::discover(platform) {
+        fatal(&info, Some(platform), reason);
+    }
+
     // A normal shell build is a bring-up image, not the scheduler benchmark.
     // Enter the shell as soon as the minimum safe kernel services are ready.
     // This keeps optional device probing, secondary-CPU startup and the EL0
@@ -343,12 +349,9 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
         nvme::probe_and_report();
         let _ = fat32::Fat32::mount();
 
-    // Discover every enabled MADT processor and install this core's per-core
-    // pointer before the GIC or the scheduler needs it.
-    println!("BOOT STAGE: device probes complete; discovering CPUs");
-    if let Err(reason) = smp::discover(platform) {
-        fatal(&info, Some(platform), reason);
-    }
+    // Discover every enabled MADT processor and install the core topology
+    // before initializing the interrupt controller and scheduler.
+    println!("BOOT STAGE: device probes complete; initializing CPU topology");
     topology::init(platform);
 
     println!("BOOT STAGE: CPU topology ready; initializing interrupt controller");
