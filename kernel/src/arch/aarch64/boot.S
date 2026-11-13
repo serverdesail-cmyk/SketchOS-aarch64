@@ -267,6 +267,36 @@ el1_entry:
     msr     cpacr_el1, x2
     isb
 
+    /*
+     * White 8x8 checkpoint: EL1 has executed ERET with the new MMU active,
+     * and the TTBR1 physical map can reach the GOP framebuffer. The later
+     * green 16x16 marker in el1_high proves the higher-half branch also worked.
+     */
+    ldr     x9, [x20, #104]
+    cbz     x9, 12f
+    movz    x10, #0xc000
+    movk    x10, #0xffff, lsl #48
+    add     x9, x9, x10
+    ldr     w11, [x20, #120]
+    mov     w12, #0x00ffffff
+    mov     x13, #0
+10:
+    cmp     x13, #8
+    b.hs    12f
+    mov     x14, #0
+11:
+    cmp     x14, #8
+    b.hs    13f
+    madd    x15, x13, x11, x14
+    str     w12, [x9, x15, lsl #2]
+    add     x14, x14, #1
+    b       11b
+13:
+    add     x13, x13, #1
+    b       10b
+12:
+    dsb     sy
+
     /* Move to the higher half. The stack and the continuation are physical
      * addresses biased by `kernel_va_start - kernel_phys_start`. */
     adrp    x9, __stack_top
