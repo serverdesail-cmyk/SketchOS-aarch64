@@ -50,6 +50,15 @@ jobs:
       - name: Build UEFI loader, kernel, userspace and ISO
         run: bash tools/build-iso.sh
 
+      - name: Verify ISO checksum and AArch64 ELF properties
+        shell: bash
+        run: |
+          sha256sum -c images/SketchOS-AArch64.iso.sha256
+          readelf -h build/iso-root/EFI/SketchOS/kernel.elf | grep -q 'Class:.*ELF64'
+          readelf -h build/iso-root/EFI/SketchOS/kernel.elf | grep -q 'Data:.*little endian'
+          readelf -h build/iso-root/EFI/SketchOS/kernel.elf | grep -q 'Machine:.*AArch64'
+          readelf -h build/iso-root/EFI/SketchOS/kernel.elf | grep -q 'Type:.*DYN'
+
       - name: Check smoke test script syntax
         run: bash -n tools/smoke-test-linux.sh
 
