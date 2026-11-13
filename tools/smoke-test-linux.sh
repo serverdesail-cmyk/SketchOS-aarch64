@@ -15,8 +15,8 @@ find_first() {
   find /usr/share -type f -iname "$pattern" -print -quit 2>/dev/null || true
 }
 
-CODE="${AAVMF_CODE:-$(find_first 'AAVMF_CODE.fd)'}"
-VARS_TEMPLATE="${AAVMF_VARS:-$(find_first 'AAVMF_VARS.fd)'}"
+CODE="${AAVMF_CODE:-$(find_first 'AAVMF_CODE.fd'}"
+VARS_TEMPLATE="${AAVMF_VARS:-$(find_first 'AAVMF_VARS.fd'}"
 if [[ -z "$CODE" || -z "$VARS_TEMPLATE" ]]; then
   echo "ERROR: AArch64 UEFI firmware (AAVMF_CODE.fd/AAVMF_VARS.fd) was not found" >&2
   exit 2
