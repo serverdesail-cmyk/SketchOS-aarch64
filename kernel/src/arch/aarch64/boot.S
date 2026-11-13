@@ -145,35 +145,45 @@ el2_setup:
  * Clobbers x9/x10/x11 only.
  */
 el1_install:
+    /*
+     * If entered at EL1, the firmware translation regime is still active.
+     * Turn it off before replacing TTBR/TCR/MAIR: otherwise even a correct
+     * new table can fault while the old regime is being reconfigured.
+     *
+     * The kernel and BootInfo are identity-mapped by the firmware/loader map,
+     * so execution and data accesses remain physical while M is clear.
+     * When called from EL2, these writes prepare the inactive EL1 regime.
+     */
+    mrs     x9, sctlr_el1
+    bic     x9, x9, #(1 << 0)       /* M: MMU */
+    bic     x9, x9, #(1 << 2)       /* C: data cache */
+    bic     x9, x9, #(1 << 12)      /* I: instruction cache */
+    msr     sctlr_el1, x9
+    dsb     sy
+    isb
+
     msr     ttbr0_el1, x21
     msr     ttbr1_el1, x22
     msr     tcr_el1, x23
     msr     mair_el1, x24
-    isb
+    dsb     sy
 
-    /* Read-modify-write keeps architectural RES1 bits firmware may have set. */
-    mrs     x9, sctlr_el1
-    mov     x10, #1                 /* M */
-    orr     x9, x9, x10
-    mov     x10, #(1 << 2)          /* C */
-    orr     x9, x9, x10
-    mov     x10, #(1 << 12)         /* I */
-    orr     x9, x9, x10
-    /* Clear A, SA, SA0 and WXN. */
-    mov     x10, #(1 << 1)
-    bic     x9, x9, x10
-    mov     x10, #(1 << 3)
-    bic     x9, x9, x10
-    mov     x10, #(1 << 4)
-    bic     x9, x9, x10
-    mov     x10, #(1 << 19)
-    bic     x9, x9, x10
-    msr     sctlr_el1, x9
-    isb
-
-    /* Discard firmware TLB entries that could alias the new tables. */
+    /* Remove stale firmware translations before enabling the new regime. */
     tlbi    vmalle1
     dsb     ish
+    isb
+
+    /* Preserve firmware RES1 bits while enabling the loader's translation
+     * roots and caches. Clear alignment checks and WXN for early boot code. */
+    mrs     x9, sctlr_el1
+    orr     x9, x9, #(1 << 0)      /* M */
+    orr     x9, x9, #(1 << 2)      /* C */
+    orr     x9, x9, #(1 << 12)     /* I */
+    bic     x9, x9, #(1 << 1)      /* A */
+    bic     x9, x9, #(1 << 3)      /* SA */
+    bic     x9, x9, #(1 << 4)      /* SA0 */
+    bic     x9, x9, #(1 << 19)     /* WXN */
+    msr     sctlr_el1, x9
     isb
     ret
 
