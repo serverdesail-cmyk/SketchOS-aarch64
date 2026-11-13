@@ -6,6 +6,7 @@ on:
       - milestone-0.0.7-persistent-shell
     paths-ignore:
       - images/SketchOS-AArch64.iso
+      - images/SketchOS-AArch64.iso.sha256
   workflow_dispatch:
 
 permissions:
@@ -67,7 +68,7 @@ jobs:
             echo "Source changed while the ISO was building; refusing to publish a stale image."
             exit 1
           fi
-          git add images/SketchOS-AArch64.iso
+          git add images/SketchOS-AArch64.iso images/SketchOS-AArch64.iso.sha256
           if git diff --cached --quiet; then
             echo "ISO is already up to date."
           else
