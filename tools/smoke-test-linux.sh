@@ -66,6 +66,11 @@ if [[ $QEMU_STATUS -eq 124 || $QEMU_STATUS -eq 137 ]]; then
   cat "$LOG" 2>/dev/null || true
   exit 1
 fi
+if [[ $QEMU_STATUS -ne 0 ]]; then
+  echo "FAIL: QEMU exited with status $QEMU_STATUS" >&2
+  cat "$LOG" 2>/dev/null || true
+  exit 1
+fi
 if [[ ! -s "$LOG" ]]; then
   echo "FAIL: QEMU produced no serial output (status $QEMU_STATUS)" >&2
   exit 1
