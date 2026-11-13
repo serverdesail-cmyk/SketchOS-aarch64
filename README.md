@@ -186,6 +186,11 @@ From the repository root:
 # build/sketchos-esp.img, and copy images/.
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\build.ps1
 
+# Create a UEFI-bootable AArch64 ISO (requires xorriso in PATH).
+# The ISO is written to images/SketchOS-AArch64.iso.
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\build.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\make-iso.ps1
+
 # Boot QEMU with a serial console window/log.
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\run-qemu.ps1
 
