@@ -1,0 +1,22 @@
+[package]
+name = "sketchos-kernel"
+version = "0.0.6"
+edition = "2021"
+description = "SketchOS freestanding AArch64 kernel"
+license = "MIT"
+build = "build.rs"
+
+[[bin]]
+name = "sketchos-kernel"
+path = "src/main.rs"
+
+[features]
+default = []
+shell = []
+
+[dependencies]
+sketchos-bootinfo = { path = "../boot/protocol" }
+sketchos-driver-api = { path = "../drivers" }
+sketchos-elf = { path = "../elf" }
+sketchos-mm = { path = "../mm" }
+sketchos-sched-core = { path = "../sched-core" }

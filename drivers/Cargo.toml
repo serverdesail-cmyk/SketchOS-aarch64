@@ -1,0 +1,10 @@
+[package]
+name = "sketchos-driver-api"
+version = "0.1.0"
+edition = "2021"
+description = "Device and driver interfaces shared by SketchOS kernel drivers"
+license = "MIT"
+
+[lib]
+name = "sketchos_driver_api"
+path = "src/lib.rs"

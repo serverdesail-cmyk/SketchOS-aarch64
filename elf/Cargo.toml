@@ -1,0 +1,10 @@
+[package]
+name = "sketchos-elf"
+version = "0.0.6"
+edition = "2021"
+description = "SketchOS host-testable static AArch64 ELF image parser"
+license = "MIT"
+
+[lib]
+name = "sketchos_elf"
+path = "src/lib.rs"

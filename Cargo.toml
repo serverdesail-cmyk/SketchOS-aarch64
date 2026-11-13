@@ -1,0 +1,30 @@
+[workspace]
+resolver = "2"
+members = [
+    "boot/protocol",
+    "boot/uefi",
+    "drivers",
+    "elf",
+    "kernel",
+    "mm",
+    "sched-core",
+]
+
+# Kernel and loader are built for their respective bare-metal/UEFI targets by
+# tools/build.ps1. These profiles keep both artifacts debuggable and abort on
+# panic (there is no unwinder in either environment).
+[profile.release]
+opt-level = 3
+debug = true
+panic = "abort"
+overflow-checks = false
+lto = "fat"
+codegen-units = 1
+
+[profile.dev]
+panic = "abort"
+# The kernel is linked as PIE (`relocation-model=pic` in .cargo/config.toml).
+# Fat LTO recompiles the standard-library rlibs with that relocation model; a
+# plain dev link fails with R_AARCH64_ABS64 against the precompiled libcore.
+lto = "fat"
+codegen-units = 1

@@ -1,0 +1,10 @@
+[package]
+name = "sketchos-sched-core"
+version = "0.0.6"
+edition = "2021"
+description = "SketchOS host-testable EEVDF scheduling primitives"
+license = "MIT"
+
+[lib]
+name = "sketchos_sched_core"
+path = "src/lib.rs"

@@ -1,0 +1,21 @@
+# The kernel is linked as a position-independent ET_DYN image. The loader
+# chooses a free physical range, copies the image there, applies the
+# R_AARCH64_RELATIVE relocations and enters at `load_bias + e_entry`.
+#
+# NEON stays enabled because the AArch64 ABI requires it. Kernel code itself
+# avoids floating point and SIMD, and never assumes firmware preserved the
+# vector register file across ExitBootServices.
+[target.aarch64-unknown-none]
+rustflags = [
+    "-C", "relocation-model=pic",
+    "-C", "link-arg=-pie",
+    "-C", "link-arg=-z",
+    "-C", "link-arg=max-page-size=4096",
+    "-C", "link-arg=-Tkernel/linker/kernel.ld",
+    # Target the actual silicon: Snapdragon X Plus (Oryon-1). LLVM knows this
+    # core, so instruction scheduling, cache/TLB hints and feature gating match
+    # the laptop instead of the generic AArch64 baseline.
+    "-C", "target-cpu=oryon-1",
+    # Oryon implements ARMv8.1-A LSE atomics; use them for spinlocks/atomics.
+    "-C", "target-feature=+lse",
+]

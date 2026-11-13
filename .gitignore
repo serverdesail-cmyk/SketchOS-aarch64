@@ -1,0 +1,9 @@
+/target
+/build
+/images/*.img
+/images/*.qcow2
+*.qcow2
+*.img
+*.log
+.vscode/
+.idea/

@@ -1,0 +1,15 @@
+[package]
+name = "sketchos-uefi"
+version = "0.0.6"
+edition = "2021"
+description = "SketchOS UEFI boot loader for AArch64"
+license = "MIT"
+
+[[bin]]
+name = "sketchos-uefi"
+path = "src/main.rs"
+
+[dependencies]
+sketchos-bootinfo = { path = "../protocol" }
+sketchos-mm = { path = "../../mm" }
+uefi = { version = "0.41.0", features = ["alloc", "global_allocator", "panic_handler"] }

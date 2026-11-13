@@ -1,0 +1,10 @@
+[package]
+name = "sketchos-mm"
+version = "0.0.6"
+edition = "2021"
+description = "SketchOS host-testable physical page and kernel heap allocators"
+license = "MIT"
+
+[lib]
+name = "sketchos_mm"
+path = "src/lib.rs"

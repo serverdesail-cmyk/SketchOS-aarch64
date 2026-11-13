@@ -1,0 +1,10 @@
+[package]
+name = "sketchos-bootinfo"
+version = "0.0.6"
+edition = "2021"
+description = "Versioned SketchOS loader/kernel boot-information ABI"
+license = "MIT"
+
+[lib]
+name = "sketchos_bootinfo"
+path = "src/lib.rs"
