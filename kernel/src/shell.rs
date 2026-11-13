@@ -12,6 +12,12 @@ use crate::storage;
 use crate::storage::BlockDevice;
 
 pub fn run() -> ! {
+    if !console::input_available() {
+        println!();
+        println!("Shell input unavailable: no supported PL011 receive device.");
+        println!("USB keyboard and this laptop's Qualcomm UART are not supported yet.");
+        crate::process::idle_forever();
+    }
     println!();
     println!("SketchOS shell. Type 'help'.");
     let mut line = [0u8; 128];
@@ -62,7 +68,7 @@ pub fn run() -> ! {
         let name = parts.next().unwrap_or("");
         match name {
             "help" => {
-                println!("commands: help version cpus mem storage poweroff");
+                println!("commands: help version cpus mem storage partitions mkfs poweroff");
             }
             "version" => {
                 println!("SketchOS 0.0.7 (AArch64)");
@@ -104,7 +110,7 @@ pub fn run() -> ! {
             }
             "poweroff" => {
                 println!("powering off");
-                crate::process::finish();
+                crate::process::poweroff_requested();
             }
             _ => {
                 println!("unknown command: {}", name);
