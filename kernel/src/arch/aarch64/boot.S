@@ -30,6 +30,11 @@
     .equ BOOT_MAIR,              232
     .equ BOOT_KERNEL_VA_START,   240
 
+    /* Linux arm64's baseline SCTLR_EL1 RES1 bits. Do not inherit an unknown
+     * EL1 control-register value when UEFI entered at EL2. */
+    .equ SCTLR_EL1_RES1,         0x30500800
+    .equ SCTLR_EL1_MMU_ON,       0x30501805
+
     .section ".text._start", "ax"
     .global _start
     .type _start, %function
@@ -87,6 +92,19 @@ _start:
  * x21..x26 = translation plan and bias
  */
 el2_setup:
+    /* Install physical exception vectors before changing EL1 state. The
+     * identity map covers the kernel image until the higher-half switch. */
+    adrp    x9, exception_vectors
+    add     x9, x9, :lo12:exception_vectors
+    msr     vbar_el2, x9
+    msr     vbar_el1, x9
+    isb
+
+    /* Give EL1 deterministic FP/SIMD access before any vector can save Q regs. */
+    mov     x9, #(3 << 20)
+    msr     cpacr_el1, x9
+    isb
+
     /* HCR_EL2: EL1 is AArch64, no VHE, and no traps from EL1 to EL2.
      * Clearing TGE means EL1 is a normal guest OS rather than the EL2 host.
      * Clearing TSC lets PSCI SMC calls reach EL3 directly. */
@@ -146,7 +164,9 @@ el2_setup:
  */
 el1_install:
     /*
-     * If entered at EL1, the firmware translation regime is still active.
+     * Install an architectural, little-endian EL1 baseline instead of
+     * read-modify-writing SCTLR_EL1. When UEFI runs at EL2, EL1's register
+     * state is not guaranteed to have been initialized by firmware.
      * Turn it off before replacing TTBR/TCR/MAIR: otherwise even a correct
      * new table can fault while the old regime is being reconfigured.
      *
@@ -154,10 +174,8 @@ el1_install:
      * so execution and data accesses remain physical while M is clear.
      * When called from EL2, these writes prepare the inactive EL1 regime.
      */
-    mrs     x9, sctlr_el1
-    bic     x9, x9, #(1 << 0)       /* M: MMU */
-    bic     x9, x9, #(1 << 2)       /* C: data cache */
-    bic     x9, x9, #(1 << 12)      /* I: instruction cache */
+    movz    x9, #0x0800
+    movk    x9, #0x3050, lsl #16   /* RES1, EE=0, E0E=0, M/C/I=0 */
     msr     sctlr_el1, x9
     dsb     sy
     isb
@@ -173,31 +191,31 @@ el1_install:
     dsb     ish
     isb
 
-    /* Preserve firmware RES1 bits while enabling the loader's translation
-     * roots and caches. Clear alignment checks and WXN for early boot code. */
-    mrs     x9, sctlr_el1
-    orr     x9, x9, #(1 << 0)      /* M */
-    orr     x9, x9, #(1 << 2)      /* C */
-    orr     x9, x9, #(1 << 12)     /* I */
-    bic     x9, x9, #(1 << 1)      /* A */
-    bic     x9, x9, #(1 << 3)      /* SA */
-    bic     x9, x9, #(1 << 4)      /* SA0 */
-    bic     x9, x9, #(1 << 19)     /* WXN */
+    /* Enable the new translation roots from a known EL1 state. This is the
+     * minimal Linux-style AArch64 baseline: RES1 plus M/C/I, little-endian,
+     * with optional controls left disabled until the kernel configures them. */
+    movz    x9, #0x1805
+    movk    x9, #0x3050, lsl #16   /* RES1 | M | C | I */
     msr     sctlr_el1, x9
     isb
     ret
 
 el1_install_enter:
+    /* UEFI may enter directly at EL1. Install vectors and FP access before
+     * touching the MMU so an early synchronous exception has a defined path. */
+    adrp    x9, exception_vectors
+    add     x9, x9, :lo12:exception_vectors
+    msr     vbar_el1, x9
+    mov     x9, #(3 << 20)
+    msr     cpacr_el1, x9
+    isb
     bl      el1_install
     b       el1_entry
 
 el1_entry:
-    /* Enable FP/SIMD at EL1 and EL0 (CPACR_EL1.FPEN = 0b11). The exception
-     * vectors save q0..q31, so this must happen before any vector can run.
-     * Read-modify-write preserves firmware settings for other coprocessors. */
-    mrs     x2, cpacr_el1
-    mov     x3, #(3 << 20)
-    orr     x2, x2, x3
+    /* Reassert the kernel's FP/SIMD policy at EL1. Other optional coprocessor
+     * features remain disabled until their own architectural setup exists. */
+    mov     x2, #(3 << 20)
     msr     cpacr_el1, x2
     isb
 
