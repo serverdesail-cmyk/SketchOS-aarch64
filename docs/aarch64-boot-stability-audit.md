@@ -10,6 +10,8 @@ SketchOS is a freestanding AArch64 operating system with a custom UEFI loader an
 
 The primary reference is the [Linux arm64 boot protocol](https://docs.kernel.org/arch/arm64/booting.html). It specifies masked interrupts, MMU-off entry, kernel image cache maintenance to the point of coherency, consistent timer state, CPU coherency, and initialized architectural system registers. SketchOS currently uses a custom handoff with its own BootInfo and translation roots. Unlike Linux's standard entry contract, the loader currently enters the kernel with its bootstrap MMU/cache regime enabled; the kernel then clears BSS, cleans those cache lines, disables EL1 translation/cache state, installs its own roots, and re-enables the regime. This is an intentional custom protocol, not Linux arm64 boot-protocol compliance, and must remain explicit and covered by regression tests.
 
+This custom entry assumption is grounded in the UEFI AArch64 platform binding: UEFI requires RAM described by the memory map to be identity-mapped during boot services, while mappings to other regions are undefined. Before installing its own tables, SketchOS touches only kernel/BootInfo RAM; it does not touch the GOP framebuffer until its own TTBR1 physical map is active.
+
 ## Findings addressed in this branch
 
 ### 1. EL1 SCTLR state was inherited from firmware
@@ -94,5 +96,6 @@ A claim of "guaranteed to work" is not technically supportable without defining 
 
 - [Linux AArch64 boot protocol](https://docs.kernel.org/arch/arm64/booting.html) — entry exception level, MMU/cache state, DMA quiescence, timers, coherency and system-register requirements.
 - [Linux arm64 `SCTLR_EL1_RES1` definition](https://kernel.googlesource.com/pub/scm/linux/kernel/git/torvalds/linux/%2B/3c730b1041aefa2a92b96fcba9db237d28585922/arch/arm64/include/asm/sysreg.h) — the RES1 mask used for the EL1 baseline in this branch.
+- [UEFI 2.10 AArch64 platform binding](https://uefi.org/specs/UEFI/2.10/02_Overview.html#aarch64-platforms) — RAM identity mapping, entry EL, cache state, timer and FP requirements.
 - [UEFI 2.10 Boot Services](https://uefi.org/specs/UEFI/2.10/07_Services_Boot_Services.html) — memory-map key and `ExitBootServices()` requirements.
 - [UEFI Rust crate 0.41 boot services](https://docs.rs/uefi/0.41.0/uefi/boot/fn.exit_boot_services.html) — the API used by the loader to obtain the final map and exit Boot Services.
