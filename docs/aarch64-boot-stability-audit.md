@@ -95,7 +95,7 @@ A claim of "guaranteed to work" is not technically supportable without defining 
 ## Reference documents
 
 - [Linux AArch64 boot protocol](https://docs.kernel.org/arch/arm64/booting.html) — entry exception level, MMU/cache state, DMA quiescence, timers, coherency and system-register requirements.
-- [Linux arm64 `SCTLR_EL1_RES1` definition](https://kernel.googlesource.com/pub/scm/linux/kernel/git/torvalds/linux/%2B/3c730b1041aefa2a92b96fcba9db237d28585922/arch/arm64/include/asm/sysreg.h) — the RES1 mask used for the EL1 baseline in this branch.
+- [Linux arm64 `SCTLR_EL1_RES1` definition](https://gbmc.googlesource.com/linux/+/5999f85ddeb436b4007878f251a30ccc8b9c638b/arch/arm64/include/asm/sysreg.h) — the RES1 mask used for the EL1 baseline in this branch.
 - [UEFI 2.10 AArch64 platform binding](https://uefi.org/specs/UEFI/2.10/02_Overview.html#aarch64-platforms) — RAM identity mapping, entry EL, cache state, timer and FP requirements.
 - [UEFI 2.10 Boot Services](https://uefi.org/specs/UEFI/2.10/07_Services_Boot_Services.html) — memory-map key and `ExitBootServices()` requirements.
 - [UEFI Rust crate 0.41 boot services](https://docs.rs/uefi/0.41.0/uefi/boot/fn.exit_boot_services.html) — the API used by the loader to obtain the final map and exit Boot Services.
