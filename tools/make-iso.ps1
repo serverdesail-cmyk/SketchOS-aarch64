@@ -44,7 +44,13 @@ if ($LASTEXITCODE -ne 0) {
 }
 $iso = Get-Item $Output
 $hash = (Get-FileHash -Algorithm SHA256 $Output).Hash.ToLowerInvariant()
+$sourceCommit = (& git -C $root rev-parse HEAD 2>$null).Trim()
+if (-not $sourceCommit) { $sourceCommit = 'unknown' }
+$manifest = "$hash  $(Split-Path -Leaf $Output)" + [Environment]::NewLine + "Source commit: $sourceCommit" + [Environment]::NewLine + "Size bytes: $($iso.Length)"
+$manifestPath = "$Output.sha256"
+Set-Content -Path $manifestPath -Value $manifest -Encoding ASCII
 Write-Host "ISO: $($iso.FullName)"
 Write-Host "Size: $([math]::Round($iso.Length / 1MB, 2)) MiB"
 Write-Host "SHA256: $hash"
+Write-Host "Build manifest: $manifestPath"
 Write-Host 'Verified: ISO readable and EFI El Torito boot entry present.'
