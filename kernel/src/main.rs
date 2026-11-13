@@ -50,19 +50,37 @@ mod syscall;
 mod topology;
 
 use sketchos_bootinfo::{
-    uart_kind, BootInfo, FLAG_FRAMEBUFFER, FLAG_HIGHER_HALF, FLAG_QEMU_VIRT, FLAG_RSDP_VALID,
-    FLAG_UART, PHYSMAP_BASE,
+    phys_to_virt, uart_kind, BootInfo, FLAG_FRAMEBUFFER, FLAG_HIGHER_HALF, FLAG_QEMU_VIRT,
+    FLAG_RSDP_VALID, FLAG_UART, PHYSMAP_BASE,
 };
 
 #[no_mangle]
 pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
-    let info = match bootinfo::validate(boot_info_addr) {
-        Ok(info) => {
-            info
+    // Bring up GOP before strict boot-info validation. This lets the kernel
+    // report validation failures instead of silently halting before its first
+    // visible message. The pointer is supplied by our own UEFI loader and the
+    // physical-map alias was installed by the handoff tables.
+    let mut framebuffer_console = false;
+    if boot_info_addr != 0 && boot_info_addr % core::mem::align_of::<BootInfo>() as u64 == 0 {
+        let raw_info = unsafe {
+            core::ptr::read_volatile(phys_to_virt(boot_info_addr) as *const BootInfo)
+        };
+        if raw_info.has_flag(FLAG_FRAMEBUFFER) {
+            let _ = console::init_framebuffer(&raw_info.framebuffer);
+            framebuffer_console = console::framebuffer_active();
         }
-        // Nothing is known about the UART yet, so there is nowhere safe to
-        // report the reason. The loader's own output remains on screen.
-        Err(_) => {
+    }
+    println!();
+    println!("KERNEL: Rust entry reached");
+    println!(
+        "KERNEL: early framebuffer console {}",
+        if framebuffer_console { "active" } else { "unavailable" }
+    );
+
+    let info = match bootinfo::validate(boot_info_addr) {
+        Ok(info) => info,
+        Err(reason) => {
+            println!("KERNEL: boot-info validation failed: {}", reason);
             arch::halt()
         }
     };
@@ -74,23 +92,7 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
     if info.has_flag(FLAG_UART) && info.uart_kind == uart_kind::PL011 {
         console::init(info.uart_base);
     }
-
-    // The loader has already mapped GOP into the higher-half physical map.
-    // Start the framebuffer console before ACPI/MMU work so early kernel entry
-    // is visible even when firmware only describes an unsupported Qualcomm UART.
-    let mut framebuffer_console = false;
-    if info.has_flag(FLAG_FRAMEBUFFER) {
-        match console::init_framebuffer(&info.framebuffer) {
-            Ok(()) => framebuffer_console = console::framebuffer_active(),
-            Err(reason) => println!("Early framebuffer console unavailable: {}", reason),
-        }
-    }
-    println!();
-    println!("KERNEL: entry reached");
-    println!(
-        "KERNEL: early framebuffer console {}",
-        if framebuffer_console { "active" } else { "unavailable" }
-    );
+    framebuffer_console = console::framebuffer_active();
 
     let counter_frequency = arch::aarch64::counter_frequency();
     let start_ticks = arch::aarch64::counter();
@@ -104,7 +106,7 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
     let mmu_result = arch::aarch64::mmu::init(&info, platform.as_ref());
 
     println!();
-    println!("SketchOS kernel 0.0.8 (AArch64)");
+    println!("SketchOS kernel 0.0.9 (AArch64)");
     println!(
         "Exceptions: VBAR_EL{} 0x{:016x}, table aligned: {}",
         arch::aarch64::current_el(),
