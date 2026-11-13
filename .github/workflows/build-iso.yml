@@ -11,6 +11,12 @@ on:
 permissions:
   contents: write
 
+# Only one image build may publish for this branch at a time. If newer source
+# lands during a build, the stale run is cancelled or rejected before publish.
+concurrency:
+  group: sketchos-iso-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-iso:
     runs-on: ubuntu-24.04
@@ -31,6 +37,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y powershell
 
+      - name: Sync to the latest branch source
+        shell: bash
+        run: |
+          git fetch origin "$GITHUB_REF_NAME"
+          git reset --hard "origin/$GITHUB_REF_NAME"
+
       - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
@@ -50,7 +62,11 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git pull --rebase origin "$GITHUB_REF_NAME"
+          git fetch origin "$GITHUB_REF_NAME"
+          if [[ "$(git rev-parse HEAD)" != "$(git rev-parse "origin/$GITHUB_REF_NAME")" ]]; then
+            echo "Source changed while the ISO was building; refusing to publish a stale image."
+            exit 1
+          fi
           git add images/SketchOS-AArch64.iso
           if git diff --cached --quiet; then
             echo "ISO is already up to date."
