@@ -79,9 +79,10 @@ SketchOS is still an early kernel and is **not** a usable operating system yet:
   The six test images are embedded at build time.
 - No page-table reclamation: an exited process frees its user pages, but its
   tables stay in the fixed kernel pool.
-- No drivers are bound. Hardware is described and some controllers are
-  programmed, but storage, GPU, Wi-Fi, Bluetooth, audio, camera, USB, input and
-  the panel are unimplemented.
+- No general-purpose device drivers are bound. The shell can read input only
+  from a firmware-described PL011 UART. USB HID keyboard, the laptop's
+  Qualcomm UART, GPU, Wi-Fi, Bluetooth, audio, camera and native panel drivers
+  remain unimplemented.
 - The physical laptop has not been booted. Its SPCR UART is interface `0x13`,
   not a PL011, and its eight-core SMP path is untested.
 - No performance claims. QEMU cannot model Snapdragon or Adreno performance.
@@ -183,7 +184,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\build.ps1
 # Boot QEMU with a serial console window/log.
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\run-qemu.ps1
 
-# Automated boot validation (rebuilds, boots, checks the log, expects poweroff).
+# Automated boot validation (uses the dedicated smoke-test build and expects QEMU poweroff).
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\smoke-test.ps1 -TimeoutSeconds 180
 
 # Two PPTT clusters (QEMU -smp 8,clusters=2,cores=4).
