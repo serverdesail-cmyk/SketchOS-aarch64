@@ -214,6 +214,43 @@ el1_entry:
     br      x9
 
 el1_high:
+    /*
+     * First visible kernel-side checkpoint. The loader mapped the GOP buffer
+     * at PHYSMAP_BASE + physical_address in TTBR1. Paint a 16x16 green marker
+     * in the upper-left corner before entering Rust; this proves that _start
+     * survived the EL transition, installed the new translation regime and
+     * reached the higher-half continuation.
+     *
+     * BootInfo.framebuffer.address/stride are at offsets 104/120.
+     */
+    ldr     x9, [x20, #104]
+    cbz     x9, 5f
+    movz    x10, #0x0000
+    movk    x10, #0xc000, lsl #32
+    movk    x10, #0xffff, lsl #48
+    add     x9, x9, x10
+    ldr     w11, [x20, #120]
+    mov     w12, #0x0000ff00
+    mov     x13, #0
+5:
+    cbz     x9, 8f
+6:
+    cmp     x13, #16
+    b.hs    8f
+    mov     x14, #0
+7:
+    cmp     x14, #16
+    b.hs    9f
+    madd    x15, x13, x11, x14
+    str     w12, [x9, x15, lsl #2]
+    add     x14, x14, #1
+    b       7b
+9:
+    add     x13, x13, #1
+    b       6b
+8:
+    dsb     sy
+
     /* Install the kernel vector table now that its virtual address is live.
      * PC-relative references already produce higher-half addresses here, so
      * the bias must not be added a second time. */
