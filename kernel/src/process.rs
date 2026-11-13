@@ -1055,8 +1055,40 @@ pub fn user_phase_complete() -> ! {
     report();
     #[cfg(feature = "shell")]
     shell::run();
-    #[cfg(not(feature = "shell"))]
-    finish()
+    #[cfg(all(not(feature = "shell"), feature = "smoke-test"))]
+    finish();
+    #[cfg(not(any(feature = "shell", feature = "smoke-test")))]
+    idle_forever()
+}
+
+/// Keep the machine powered after the embedded test workload has completed.
+/// This fallback deliberately does not request PSCI SYSTEM_OFF.
+pub fn idle_forever() -> ! {
+    println!("SketchOS is idle; no automatic power-off requested.");
+    gic::enable_irq();
+    loop {
+        // SAFETY: WFI is a safe low-power wait at EL1. IRQs are enabled so a
+        // future supported interrupt source can wake this core.
+        unsafe { core::arch::asm!("wfi", options(nomem, nostack)) };
+    }
+}
+
+/// Request shutdown only after an explicit shell command. Use the PSCI conduit
+/// declared by ACPI FADT; never infer a conduit from a device address.
+pub fn poweroff_requested() -> ! {
+    println!("Power-off requested by user.");
+    gic::disable_irq();
+    if let Some(use_hvc) = smp::explicit_power_off() {
+        println!("Power: requesting PSCI SYSTEM_OFF");
+        // SAFETY: ACPI FADT declared PSCI compliance and its SMC/HVC conduit.
+        match unsafe { aarch64::psci_system_off(use_hvc) } {
+            Ok(()) => println!("Power: PSCI SYSTEM_OFF returned unexpectedly"),
+            Err(code) => println!("Power: PSCI SYSTEM_OFF rejected (error {})", code),
+        }
+    } else {
+        println!("Power: PSCI unavailable; CPU will halt. Use the hardware power button.");
+    }
+    aarch64::halt()
 }
 
 /// Print the process summary and request power-off.
