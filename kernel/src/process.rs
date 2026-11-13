@@ -1098,8 +1098,9 @@ pub fn finish() -> ! {
 
     // Keep another timer tick from interrupting the final halt/power-off path.
     gic::disable_irq();
-    if let Some(use_hvc) = smp::power_off() {
-        println!("QEMU: requesting PSCI SYSTEM_OFF");
+    if cfg!(feature = "smoke-test") {
+        if let Some(use_hvc) = smp::power_off() {
+            println!("QEMU: requesting PSCI SYSTEM_OFF");
         // SAFETY: the FADT declared PSCI and the conduit used here.
         match unsafe { aarch64::psci_system_off(use_hvc) } {
             Ok(()) => println!("QEMU: PSCI SYSTEM_OFF returned unexpectedly"),
@@ -1121,7 +1122,8 @@ pub fn fail(reason: &str) -> ! {
         // SAFETY: the FADT declared PSCI and the conduit used here.
         match unsafe { aarch64::psci_system_off(use_hvc) } {
             Ok(()) => println!("QEMU: PSCI SYSTEM_OFF returned unexpectedly"),
-            Err(code) => println!("QEMU: PSCI SYSTEM_OFF rejected (error {})", code),
+                Err(code) => println!("QEMU: PSCI SYSTEM_OFF rejected (error {})", code),
+            }
         }
     }
     println!("Halting: userspace setup failed");
