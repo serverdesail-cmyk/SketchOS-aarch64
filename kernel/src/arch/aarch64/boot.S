@@ -273,7 +273,7 @@ el1_entry:
      * green 16x16 marker in el1_high proves the higher-half branch also worked.
      */
     ldr     x9, [x20, #104]
-    cbz     x9, 12f
+    cbz     x9, .Lel1_fb_done
     movz    x10, #0x0000
     movk    x10, #0xc000, lsl #32
     movk    x10, #0xffff, lsl #48
