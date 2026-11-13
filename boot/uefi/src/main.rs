@@ -19,6 +19,7 @@
 extern crate alloc;
 
 mod acpi;
+mod dma;
 mod elf;
 mod handoff;
 mod platform;
@@ -173,6 +174,11 @@ fn main() -> Status {
     } else {
         uefi::println!("Debug UART: none described by firmware");
     }
+
+    // All firmware disk/filesystem work is complete. Quiesce PCI bus masters
+    // before the kernel starts allocating RAM, as required by the arm64 boot
+    // protocol. This also avoids stale device DMA corrupting early page tables.
+    dma::quiesce_pci_bus_masters();
 
     // Put the final handoff marker at the absolute top-left of the UEFI
     // text console. Keep it visible while ExitBootServices and the branch to
