@@ -339,6 +339,16 @@ pub fn power_off() -> Option<bool> {
     }
 }
 
+/// Return the firmware-declared PSCI conduit for an explicit user request.
+/// Unlike the automated smoke-test helper, this is not restricted to QEMU.
+pub fn explicit_power_off() -> Option<bool> {
+    if PSCI_READY.load(Ordering::Acquire) {
+        Some(PSCI_HVC.load(Ordering::Acquire))
+    } else {
+        None
+    }
+}
+
 /// Run a ping/pong round trip against every online secondary.
 ///
 /// Only one ping is outstanding at a time. If a secondary does not answer
