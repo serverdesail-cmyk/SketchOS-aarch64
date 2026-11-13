@@ -218,7 +218,7 @@ el1_install:
      * minimal Linux-style AArch64 baseline: RES1 plus M/C/I, little-endian,
      * with optional controls left disabled until the kernel configures them. */
     movz    x9, #0x1805
-    movk    x9, #0x30d0, lsl #16   /* SCTLR_EL1_RES1 | M | C | I */
+    movk    x9, #0x3050, lsl #16   /* SCTLR_EL1_RES1 | M | C | I */
     msr     sctlr_el1, x9
     isb
     ret
