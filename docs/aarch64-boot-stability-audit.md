@@ -16,7 +16,7 @@ The primary reference is the [Linux arm64 boot protocol](https://docs.kernel.org
 
 The old entry path read-modify-wrote `SCTLR_EL1`, preserving an unknown register state when firmware entered at EL2. That is not a safe basis for an OS transition: the Linux arm64 boot contract explicitly calls out system-register state as something the loader must initialize.
 
-The new path writes a deterministic EL1 baseline using the Linux arm64 RES1 bit set (`0x30d00800`), with MMU/data-cache/instruction-cache disabled while replacing translation registers, then enables the new regime. It also initializes EL1 FP/SIMD access and exception vectors before the EL transition.
+The new path writes a deterministic EL1 baseline using the Linux arm64 RES1 bit set (`0x30500800`), with MMU/data-cache/instruction-cache disabled while replacing translation registers, then enables the new regime. It also initializes EL1 FP/SIMD access and exception vectors before the EL transition.
 
 ### 2. Early BSS writes could remain dirty when the data cache was disabled
 
