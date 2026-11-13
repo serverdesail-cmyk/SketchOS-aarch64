@@ -15,8 +15,11 @@ and every change is validated in QEMU before it is considered working.
 
 **Milestone 0.0.6 is verified under QEMU** (2026-11-12).
 
-A 0.0.7 development branch adds a persistent post-test lifecycle and a small
-PL011-serial shell. It is staged but not yet built or verified; see
+A 0.0.7 development branch adds a persistent lifecycle and an early PL011-serial
+bring-up shell. The normal shell build now skips optional device probes and the
+scheduler/EL0 benchmark path so it can reach the prompt sooner. The branch ISO
+is rebuilt by GitHub Actions after source changes; neither the shell nor physical
+laptop input is hardware-verified yet. See
 [docs/milestone-0.0.7.md](docs/milestone-0.0.7.md). The laptop's Qualcomm UART,
 USB keyboard and ACPI power-button event path are still unsupported. The kernel now runs an
 EEVDF scheduler with one run queue per core, cluster-aware work stealing driven
