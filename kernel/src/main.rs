@@ -371,7 +371,7 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
 fn fatal(info: &BootInfo, platform: Option<&acpi::Platform>, reason: &str) -> ! {
     println!();
     println!("FATAL: {}", reason);
-    if info.has_flag(FLAG_QEMU_VIRT) {
+    if cfg!(feature = "smoke-test") && info.has_flag(FLAG_QEMU_VIRT) {
         if let Some(platform) = platform {
             if platform.psci.fadt_present && platform.psci.compliant {
                 println!("QEMU: requesting PSCI SYSTEM_OFF");
