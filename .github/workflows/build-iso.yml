@@ -65,6 +65,15 @@ jobs:
       - name: Boot the actual ISO under AArch64 QEMU
         run: bash tools/smoke-test-linux.sh
 
+      - name: Upload QEMU serial log (including failed boots)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SketchOS-QEMU-serial-log
+          path: build/qemu-smoke-serial.log
+          if-no-files-found: ignore
+          retention-days: 30
+
       - name: Upload validated ISO
         uses: actions/upload-artifact@v4
         with:
