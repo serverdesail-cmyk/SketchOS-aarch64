@@ -1,21 +1,27 @@
 param(
     [string]$EspImage = '',
     [string]$Output = '',
+    [string]$EspDirectory = '',
     [string]$Xorriso = 'xorriso'
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 if (-not $EspImage) { $EspImage = Join-Path $root 'build/sketchos-esp.img' }
 if (-not $Output) { $Output = Join-Path $root 'images/SketchOS-AArch64.iso' }
+if (-not $EspDirectory) { $EspDirectory = Join-Path $root 'build/esp' }
 $tool = Get-Command $Xorriso -ErrorAction SilentlyContinue
 if (-not $tool) { throw 'xorriso was not found in PATH.' }
 if (-not (Test-Path $EspImage)) { throw "ESP image missing: $EspImage (run tools\build.ps1 first)." }
+if (-not (Test-Path (Join-Path $EspDirectory 'EFI/BOOT/BOOTAA64.EFI'))) { throw "EFI tree missing: $EspDirectory (run tools\build.ps1 first)." }
 $outputDirectory = Split-Path -Parent $Output
 New-Item -ItemType Directory -Force -Path $outputDirectory | Out-Null
 $stage = Join-Path $root 'build/iso-root'
 if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
 Copy-Item -Force $EspImage (Join-Path $stage 'sketchos-esp.img')
+# Also expose the standard EFI file tree at ISO root. This helps imaging tools
+# that copy the ISO filesystem to a USB device rather than using El Torito.
+Copy-Item -Recurse -Force (Join-Path $EspDirectory 'EFI') $stage
 @'
 SketchOS AArch64
 ================
