@@ -112,6 +112,12 @@ pub fn write_byte(byte: u8) {
     }
 }
 
+/// True when a supported PL011 receive FIFO is available for shell input.
+/// This does not imply USB HID or laptop keyboard support.
+pub fn input_available() -> bool {
+    UART_BASE.load(Ordering::Relaxed) != 0
+}
+
 /// Read one byte from the PL011 RX FIFO, or None if empty. Non-blocking.
 pub fn read_byte() -> Option<u8> {
     let base = UART_BASE.load(Ordering::Relaxed);
