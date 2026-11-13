@@ -21,6 +21,9 @@
 
 use core::{mem, ptr};
 
+#[path = "../../../kernel/src/font8x8.rs"]
+mod font8x8;
+
 use crate::elf::{LoadedKernel, PF_W, PF_X};
 use sketchos_bootinfo::{
     memory_kind, BootInfo, MemoryDescriptor, MemoryRegion, FLAG_HIGHER_HALF, FLAG_MEMORY_MAP,
@@ -78,6 +81,7 @@ impl TableAllocator for Pool {
 /// Must be called exactly once, after every protocol, `Vec` and pool
 /// allocation other than the handoff pages has been dropped.
 pub unsafe fn enter(info: BootInfo, kernel: LoadedKernel) -> ! {
+    draw_stage(&info, 0, "HANDOFF: PREPARING");
     let descriptor_size = mem::size_of::<MemoryDescriptor>();
 
     // Preliminary map only supplies a capacity estimate. It is freed while
@@ -139,7 +143,9 @@ pub unsafe fn enter(info: BootInfo, kernel: LoadedKernel) -> ! {
     ptr::write(info_ptr, boot_info);
 
     // From here on the only UEFI call is the exit itself.
+    draw_stage(&info, 1, "HANDOFF: EXITING UEFI");
     let final_map = boot::exit_boot_services(Some(MemoryType::LOADER_DATA));
+    draw_stage(&info, 2, "HANDOFF: UEFI EXITED");
 
     // Copy the authoritative map. `MemoryMapOwned` is intentionally leaked:
     // dropping it would interact with the now-disabled boot-services
@@ -184,6 +190,7 @@ pub unsafe fn enter(info: BootInfo, kernel: LoadedKernel) -> ! {
 
     (*info_ptr).memory_map.count = count as u64;
     (*info_ptr).flags |= FLAG_MEMORY_MAP;
+    draw_stage(&info, 3, "HANDOFF: MEMORY MAP OK");
 
     if kernel_phys_to_virt(kernel.start) != kernel.virt_start
         || kernel_phys_to_virt(kernel.end) != kernel.virt_end
@@ -364,6 +371,8 @@ pub unsafe fn enter(info: BootInfo, kernel: LoadedKernel) -> ! {
         }
     }
 
+    draw_stage(&info, 4, "HANDOFF: PAGE TABLES BUILT");
+
     // --- Translation-control state --------------------------------------
     let mmfr0: u64;
     // SAFETY: ID_AA64MMFR0_EL1 is readable at the current exception level.
@@ -396,8 +405,74 @@ pub unsafe fn enter(info: BootInfo, kernel: LoadedKernel) -> ! {
     crate::elf::clean_data_cache(map_ptr as u64, map_ptr as u64 + map_bytes as u64);
     core::arch::asm!("dsb sy", "isb", options(nostack));
 
+    draw_stage(&info, 5, "HANDOFF: ENTERING KERNEL");
     let entry: extern "C" fn(u64) -> ! = mem::transmute(kernel.entry);
     entry(info_ptr as u64)
+}
+
+/// Draw progress directly into GOP memory. UEFI text protocols are unavailable
+/// after ExitBootServices, but the firmware framebuffer remains mapped.
+fn draw_stage(info: &BootInfo, row: u32, text: &str) {
+    if !info.has_flag(sketchos_bootinfo::FLAG_FRAMEBUFFER) {
+        return;
+    }
+    let fb = info.framebuffer;
+    if fb.address == 0 || fb.width < 64 || fb.height < 32 || fb.stride < fb.width {
+        return;
+    }
+    if fb.pixel_format != sketchos_bootinfo::pixel_format::RGB
+        && fb.pixel_format != sketchos_bootinfo::pixel_format::BGR
+        && fb.pixel_format != sketchos_bootinfo::pixel_format::BITMASK
+    {
+        return;
+    }
+    let Some(required) = (fb.stride as u64)
+        .checked_mul(fb.height as u64)
+        .and_then(|pixels| pixels.checked_mul(4))
+    else {
+        return;
+    };
+    if fb.size < required {
+        return;
+    }
+
+    const SCALE: u32 = 2;
+    const CELL_W: u32 = 16;
+    const CELL_H: u32 = 18;
+    let x0 = 12u32;
+    let y0 = 12u32.saturating_add(row.saturating_mul(CELL_H));
+    if y0.saturating_add(CELL_H) > fb.height {
+        return;
+    }
+    let columns = fb.width.saturating_sub(x0 + 8) / CELL_W;
+    let base = fb.address as *mut u32;
+
+    for (column, byte) in text.bytes().take(columns as usize).enumerate() {
+        let x = x0 + column as u32 * CELL_W;
+        for py in 0..CELL_H {
+            for px in 0..CELL_W {
+                let index = (y0 + py) as u64 * fb.stride as u64 + (x + px) as u64;
+                unsafe { ptr::write_volatile(base.add(index as usize), 0x0000_0000) };
+            }
+        }
+        let glyph_index = if byte < 128 { byte } else { b'?' };
+        let glyph = font8x8::BASIC[glyph_index as usize];
+        for gy in 0..8u32 {
+            for gx in 0..8u32 {
+                if glyph[gy as usize] & (1 << gx) == 0 {
+                    continue;
+                }
+                for sy in 0..SCALE {
+                    for sx in 0..SCALE {
+                        let px = x + gx * SCALE + sx;
+                        let py = y0 + 2 + gy * SCALE + sy;
+                        let index = py as u64 * fb.stride as u64 + px as u64;
+                        unsafe { ptr::write_volatile(base.add(index as usize), 0x00FF_FFFF) };
+                    }
+                }
+            }
+        }
+    }
 }
 
 const fn kernel_phys_to_virt(physical: u64) -> u64 {

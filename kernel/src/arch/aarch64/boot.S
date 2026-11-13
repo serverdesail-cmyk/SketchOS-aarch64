@@ -44,6 +44,12 @@ _start:
     lsr     x19, x19, #2
     and     x19, x19, #3
 
+    /* Visible marker before changing any translation state. */
+    ldr     x0, [x20, #104]         /* BootInfo.framebuffer.address */
+    mov     w1, #0x0000ff00         /* green: physical/firmware mapping */
+    mov     x2, #16
+    bl      early_fb_mark
+
     /* Load the translation plan before any register is reused. */
     ldr     x21, [x20, #BOOT_TTBR0_ROOT]
     ldr     x22, [x20, #BOOT_TTBR1_ROOT]
@@ -182,6 +188,16 @@ el1_install_enter:
     b       el1_entry
 
 el1_entry:
+    /* EL1 is now running with the loader's translation tables installed.
+     * Draw through TTBR1's linear physical map before moving to high-half. */
+    ldr     x0, [x20, #104]
+    movz    x9, #0xc000, lsl #32
+    movk    x9, #0xffff, lsl #48
+    add     x0, x0, x9
+    mov     w1, #0x000000ff         /* blue: EL1 translation active */
+    mov     x2, #40
+    bl      early_fb_mark
+
     /* Enable FP/SIMD at EL1 and EL0 (CPACR_EL1.FPEN = 0b11). The exception
      * vectors save q0..q31, so this must happen before any vector can run.
      * Read-modify-write preserves firmware settings for other coprocessors. */
@@ -204,6 +220,15 @@ el1_entry:
     br      x9
 
 el1_high:
+    /* Reached the higher-half continuation with the kernel stack installed. */
+    ldr     x0, [x20, #104]
+    movz    x9, #0xc000, lsl #32
+    movk    x9, #0xffff, lsl #48
+    add     x0, x0, x9
+    mov     w1, #0x00ff0000         /* red: higher-half continuation */
+    mov     x2, #64
+    bl      early_fb_mark
+
     /* Install the kernel vector table now that its virtual address is live.
      * PC-relative references already produce higher-half addresses here, so
      * the bias must not be added a second time. */
@@ -222,6 +247,45 @@ el1_high:
 park:
     wfe
     b       park
+
+/*
+ * Paint a 16x16 diagnostic square into the GOP framebuffer.
+ *   x0 = framebuffer virtual/physical base
+ *   w1 = 32-bit pixel value
+ *   x2 = horizontal pixel offset
+ * y is fixed at 16. x20 retains the physical BootInfo pointer.
+ * No stack, Rust runtime, or other global state is used.
+ */
+early_fb_mark:
+    cbz     x0, 9f
+    ldr     w9, [x20, #112]         /* width */
+    ldr     w10, [x20, #116]        /* height */
+    ldr     w11, [x20, #120]        /* stride */
+    cbz     w11, 9f
+    add     w12, w2, #16
+    cmp     w12, w9
+    b.hi    9f
+    cmp     w10, #32
+    b.ls    9f
+    uxtw    x11, w11
+    mov     x12, #16
+    madd    x13, x12, x11, x2
+    lsl     x13, x13, #2
+    add     x13, x0, x13
+    mov     w14, #16
+1:
+    mov     w15, #16
+2:
+    str     w1, [x13], #4
+    subs    w15, w15, #1
+    b.ne    2b
+    lsl     x16, x11, #2
+    sub     x16, x16, #64
+    add     x13, x13, x16
+    subs    w14, w14, #1
+    b.ne    1b
+9:
+    ret
 
     .size _start, . - _start
 

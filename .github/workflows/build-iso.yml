@@ -1,0 +1,77 @@
+name: Build AArch64 ISO
+
+on:
+  push:
+    branches:
+      - milestone-0.0.7-persistent-shell
+    paths-ignore:
+      - images/SketchOS-AArch64.iso
+      - images/SketchOS-AArch64.iso.sha256
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Only one image build may publish for this branch at a time. If newer source
+# lands during a build, the stale run is cancelled or rejected before publish.
+concurrency:
+  group: sketchos-iso-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-iso:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Install xorriso and PowerShell
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget apt-transport-https software-properties-common xorriso
+          wget -q https://packages.microsoft.com/config/ubuntu/24.04/packages-microsoft-prod.deb -O packages-microsoft-prod.deb
+          sudo dpkg -i packages-microsoft-prod.deb
+          sudo apt-get update
+          sudo apt-get install -y powershell
+
+      - name: Sync to the latest branch source
+        shell: bash
+        run: |
+          git fetch origin "$GITHUB_REF_NAME"
+          git reset --hard "origin/$GITHUB_REF_NAME"
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.1
+          targets: aarch64-unknown-none,aarch64-unknown-uefi
+
+      - name: Build kernel, UEFI loader and FAT32 ESP
+        shell: pwsh
+        run: ./tools/build.ps1
+
+      - name: Package UEFI ISO into images
+        shell: pwsh
+        run: ./tools/make-iso.ps1
+
+      - name: Commit generated ISO into this branch
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin "$GITHUB_REF_NAME"
+          if [[ "$(git rev-parse HEAD)" != "$(git rev-parse "origin/$GITHUB_REF_NAME")" ]]; then
+            echo "Source changed while the ISO was building; refusing to publish a stale image."
+            exit 1
+          fi
+          git add images/SketchOS-AArch64.iso images/SketchOS-AArch64.iso.sha256
+          if git diff --cached --quiet; then
+            echo "ISO is already up to date."
+          else
+            git commit -m "Build SketchOS AArch64 bootable ISO"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi

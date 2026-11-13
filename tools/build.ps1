@@ -15,6 +15,8 @@
 
 param(
     [switch]$Debug,
+    [switch]$NoShell,
+    [switch]$SmokeTest,
     [switch]$Shell
 )
 
@@ -38,6 +40,12 @@ function Invoke-Cargo {
 }
 
 try {
+    if ($NoShell -and $Shell) {
+        throw 'Use either -NoShell or -Shell, not both.'
+    }
+    if ($SmokeTest -and ($NoShell -or $Shell)) {
+        throw '-SmokeTest is a separate build mode; do not combine it with shell switches.'
+    }
     $release = -not $Debug
     $profileArgs = if ($release) { @('--release') } else { @() }
     $outDir = if ($release) { 'release' } else { 'debug' }
@@ -49,8 +57,16 @@ try {
     }
 
     Write-Host '==> Building kernel (aarch64-unknown-none)'
-    $featureArgs = if ($Shell) { @('--features', 'shell') } else { @() }
-Invoke-Cargo (@('build') + $profileArgs + $featureArgs + @('--target', 'aarch64-unknown-none', '-p', 'sketchos-kernel'))
+    # Normal builds include the shell. Smoke tests deliberately use a separate
+    # feature so their QEMU-only automatic shutdown remains deterministic.
+    if ($SmokeTest) {
+        $featureArgs = @('--features', 'smoke-test')
+    } elseif ($NoShell) {
+        $featureArgs = @()
+    } else {
+        $featureArgs = @('--features', 'shell')
+    }
+    Invoke-Cargo (@('build') + $profileArgs + $featureArgs + @('--target', 'aarch64-unknown-none', '-p', 'sketchos-kernel'))
 
     Write-Host '==> Building UEFI loader (aarch64-unknown-uefi)'
     Invoke-Cargo (@('build') + $profileArgs + @('--target', 'aarch64-unknown-uefi', '-p', 'sketchos-uefi'))

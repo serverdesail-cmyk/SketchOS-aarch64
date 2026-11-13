@@ -5,7 +5,8 @@
 #   .\tools\run-qemu.ps1 -NoBuild         # run the current ESP
 #   .\tools\run-qemu.ps1 -Serial build/serial.log   # log instead of stdio
 #
-# The VM exits by itself when the QEMU path reaches PSCI SYSTEM_OFF.
+# Normal builds enter the interactive PL011 shell and stay open until `poweroff`.
+# Use smoke-test.ps1 for the separate automated build that powers off on completion.
 #
 # The default accelerator is TCG. WHPX is accepted for diagnostics but cannot
 # boot the bundled EDK2 AArch64 firmware or the CNTP-based kernel on this host.

@@ -50,19 +50,40 @@ mod syscall;
 mod topology;
 
 use sketchos_bootinfo::{
-    uart_kind, BootInfo, FLAG_FRAMEBUFFER, FLAG_HIGHER_HALF, FLAG_QEMU_VIRT, FLAG_RSDP_VALID,
-    FLAG_UART, PHYSMAP_BASE,
+    phys_to_virt, uart_kind, BootInfo, FLAG_FRAMEBUFFER, FLAG_HIGHER_HALF, FLAG_QEMU_VIRT,
+    FLAG_RSDP_VALID, FLAG_UART, PHYSMAP_BASE,
 };
 
 #[no_mangle]
 pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
-    let info = match bootinfo::validate(boot_info_addr) {
-        Ok(info) => {
-            info
+    // Bring up GOP before strict boot-info validation. This lets the kernel
+    // report validation failures instead of silently halting before its first
+    // visible message. The pointer is supplied by our own UEFI loader and the
+    // physical-map alias was installed by the handoff tables.
+    let mut framebuffer_console = false;
+    if boot_info_addr != 0 && boot_info_addr % core::mem::align_of::<BootInfo>() as u64 == 0 {
+        let raw_info = unsafe {
+            core::ptr::read_volatile(phys_to_virt(boot_info_addr) as *const BootInfo)
+        };
+        if raw_info.has_flag(FLAG_UART) && raw_info.uart_kind == uart_kind::PL011 {
+            console::init(raw_info.uart_base);
         }
-        // Nothing is known about the UART yet, so there is nowhere safe to
-        // report the reason. The loader's own output remains on screen.
-        Err(_) => {
+        if raw_info.has_flag(FLAG_FRAMEBUFFER) {
+            let _ = console::init_framebuffer(&raw_info.framebuffer);
+            framebuffer_console = console::framebuffer_active();
+        }
+    }
+    println!();
+    println!("KERNEL: Rust entry reached");
+    println!(
+        "KERNEL: early framebuffer console {}",
+        if framebuffer_console { "active" } else { "unavailable" }
+    );
+
+    let info = match bootinfo::validate(boot_info_addr) {
+        Ok(info) => info,
+        Err(reason) => {
+            println!("KERNEL: boot-info validation failed: {}", reason);
             arch::halt()
         }
     };
@@ -74,6 +95,7 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
     if info.has_flag(FLAG_UART) && info.uart_kind == uart_kind::PL011 {
         console::init(info.uart_base);
     }
+    framebuffer_console = console::framebuffer_active();
 
     let counter_frequency = arch::aarch64::counter_frequency();
     let start_ticks = arch::aarch64::counter();
@@ -86,22 +108,8 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
     // fatal: the kernel continues under the firmware map and reports why.
     let mmu_result = arch::aarch64::mmu::init(&info, platform.as_ref());
 
-    // The framebuffer is initialized after the MMU so the console draws through
-    // the final Normal Non-cacheable mapping rather than the firmware's.
-    let mut framebuffer_console = false;
-    if info.has_flag(FLAG_FRAMEBUFFER) {
-        match console::init_framebuffer(&info.framebuffer) {
-            Ok(()) => framebuffer_console = console::framebuffer_active(),
-            Err(reason) => {
-                // The UART may not exist on this machine, so this line can be
-                // invisible on real hardware. It is still useful under QEMU.
-                println!("Framebuffer console unavailable: {}", reason);
-            }
-        }
-    }
-
     println!();
-    println!("SketchOS kernel 0.0.6 (AArch64)");
+    println!("SketchOS kernel 0.0.9 (AArch64)");
     println!(
         "Exceptions: VBAR_EL{} 0x{:016x}, table aligned: {}",
         arch::aarch64::current_el(),
@@ -261,6 +269,8 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
         micros, elapsed, counter_frequency
     );
 
+    println!("BOOT STAGE: inventory complete; installing ACPI platform");
+
     // The interrupt controller, timer, memory allocators and SMP startup
     // require an ACPI description and EL1. A failure here is fatal to the
     // milestone because the kernel has no other way to regain control.
@@ -269,10 +279,12 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
         None => fatal(&info, None, "no ACPI platform description"),
     };
 
+    println!("BOOT STAGE: ACPI platform installed");
     smp::set_qemu(info.has_flag(FLAG_QEMU_VIRT));
 
     // Physical memory and the kernel heap are brought up before any secondary
     // is started. The boot self-tests release every allocation they make.
+    println!("BOOT STAGE: initializing physical memory allocator");
     if let Err(_reason) = phys::init(&info, boot_info_addr) {
         fatal(
             &info,
@@ -280,6 +292,7 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
             "physical allocator initialization failed",
         );
     }
+    println!("BOOT STAGE: physical allocator ready; running memory self-test");
     if let Err(reason) = selftest::physical(&info, boot_info_addr) {
         fatal(&info, Some(platform), reason);
     }
@@ -287,6 +300,7 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
     // Exercise a real user address space (fresh TTBR0 root plus ASID) while the
     // bootstrap identity root is still installed. The self-test restores the
     // root before returning, so sealing TTBR0 later is safe.
+    println!("BOOT STAGE: memory self-test passed; checking address spaces");
     match arch::aarch64::mmu::address_space_self_test() {
         Ok(()) => println!("MMU: address-space self-test passed (ASID switch and user page)"),
         Err(reason) => fatal(&info, Some(platform), reason),
@@ -295,6 +309,7 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
     // Prove the recoverable-fault path on the installed map: an unmapped read,
     // a write to read-only text and an execute from writable data must all be
     // caught and resumed instead of halting the core.
+    println!("BOOT STAGE: address-space self-test passed; checking fault recovery");
     match arch::aarch64::mmu::fault_self_test() {
         Ok(()) => println!(
             "MMU: fault self-test passed (unmapped read, read-only write, NX execute)"
@@ -302,12 +317,37 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
         Err(reason) => fatal(&info, Some(platform), reason),
     }
 
+    println!("BOOT STAGE: fault recovery passed; initializing heap");
     if let Err(reason) = heap::init() {
         fatal(&info, Some(platform), reason);
     }
     if let Err(reason) = selftest::heap_test() {
         fatal(&info, Some(platform), reason);
     }
+
+    // Discover the boot CPU and publish the firmware PSCI conduit before any
+    // normal-build shell command can request an explicit power-off.
+    if let Err(reason) = smp::discover(platform) {
+        fatal(&info, Some(platform), reason);
+    }
+
+    // A normal shell build is a bring-up image, not the scheduler benchmark.
+    // Enter the shell as soon as the minimum safe kernel services are ready.
+    // This keeps optional device probing, secondary-CPU startup and the EL0
+    // stress workloads from hiding the first usable prompt behind unrelated
+    // subsystems. On machines without a supported PL011 RX path, shell::run()
+    // prints the exact limitation and parks without powering the machine off.
+    #[cfg(feature = "shell")]
+    {
+        println!();
+        println!("BOOT: core initialization complete");
+        println!("BOOT: entering interactive shell");
+        shell::run();
+    }
+
+    #[cfg(not(feature = "shell"))]
+    {
+        println!("BOOT STAGE: heap ready; probing devices");
         storage::probe();
         net::probe();
         drm::init();
@@ -317,18 +357,18 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
         nvme::probe_and_report();
         let _ = fat32::Fat32::mount();
 
-    // Discover every enabled MADT processor and install this core's per-core
-    // pointer before the GIC or the scheduler needs it.
-    if let Err(reason) = smp::discover(platform) {
-        fatal(&info, Some(platform), reason);
-    }
+    // Discover every enabled MADT processor and install the core topology
+    // before initializing the interrupt controller and scheduler.
+    println!("BOOT STAGE: device probes complete; initializing CPU topology");
     topology::init(platform);
 
+    println!("BOOT STAGE: CPU topology ready; initializing interrupt controller");
     if let Err(reason) = arch::aarch64::gic::init(platform) {
         fatal(&info, Some(platform), reason);
     }
     arch::aarch64::gic::report();
 
+    println!("BOOT STAGE: interrupt controller ready; initializing timer");
     if let Err(reason) = arch::aarch64::timer::init() {
         fatal(&info, Some(platform), reason);
     }
@@ -337,9 +377,11 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
     // Publish the translation state and clean the kernel image, then start the
     // secondaries. Each secondary initializes its own GIC redistributor and
     // timer and reports online before waiting for the scheduler release.
+    println!("BOOT STAGE: timer ready; preparing secondary CPUs");
     if let Err(reason) = smp::prepare(&info) {
         fatal(&info, Some(platform), reason);
     }
+    println!("BOOT STAGE: starting secondary CPUs");
     smp::start_secondaries();
     smp::report();
     topology::report();
@@ -358,20 +400,23 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
     arch::aarch64::mmu::seal_low_half();
     println!("MMU: TTBR0 walks disabled; low half sealed");
 
+    println!("BOOT STAGE: SMP online; initializing scheduler");
     if let Err(reason) = sched::init() {
         fatal(&info, Some(platform), reason);
     }
     sched::report();
 
+    println!("BOOT STAGE: scheduler ready; releasing CPUs");
     smp::release_scheduler();
     sched::start()
+    }
 }
 
 /// Report a fatal pre-scheduler error and terminate cleanly under QEMU.
 fn fatal(info: &BootInfo, platform: Option<&acpi::Platform>, reason: &str) -> ! {
     println!();
     println!("FATAL: {}", reason);
-    if info.has_flag(FLAG_QEMU_VIRT) {
+    if cfg!(feature = "smoke-test") && info.has_flag(FLAG_QEMU_VIRT) {
         if let Some(platform) = platform {
             if platform.psci.fadt_present && platform.psci.compliant {
                 println!("QEMU: requesting PSCI SYSTEM_OFF");

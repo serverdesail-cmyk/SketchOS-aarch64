@@ -13,7 +13,18 @@ and every change is validated in QEMU before it is considered working.
 
 ## Project status
 
-**Milestone 0.0.6 is verified under QEMU** (2026-11-12). The kernel now runs an
+**Milestone 0.0.6 is verified under QEMU** (2026-11-12). The 0.0.9 diagnostic image adds assembly-stage framebuffer markers and a Rust-entry/boot-info validation report; it is not hardware-verified.
+
+The 0.0.7 development branch adds a persistent lifecycle, early boot-transition
+framebuffer diagnostics, and an early PL011-serial bring-up shell. The 0.0.9
+diagnostic revision paints distinct framebuffer markers before the MMU switch,
+after EL1 translation activation, and at the higher-half continuation; it also
+reports Rust entry before strict boot-info validation. The normal
+shell build skips optional device probes and the scheduler/EL0 benchmark path.
+The branch ISO is rebuilt by GitHub Actions after source changes; physical
+laptop boot and interactive input are not hardware-verified yet. See
+[docs/milestone-0.0.9.md](docs/milestone-0.0.8.md). The laptop's Qualcomm UART,
+USB keyboard and ACPI power-button event path are still unsupported. The kernel now runs an
 EEVDF scheduler with one run queue per core, cluster-aware work stealing driven
 by ACPI PPTT, one-shot per-core `CNTP` timers with tickless idle, a debug-only
 invariant checker, and per-thread wake-latency/run-delay diagnostics. It keeps
@@ -79,9 +90,10 @@ SketchOS is still an early kernel and is **not** a usable operating system yet:
   The six test images are embedded at build time.
 - No page-table reclamation: an exited process frees its user pages, but its
   tables stay in the fixed kernel pool.
-- No drivers are bound. Hardware is described and some controllers are
-  programmed, but storage, GPU, Wi-Fi, Bluetooth, audio, camera, USB, input and
-  the panel are unimplemented.
+- No general-purpose device drivers are bound. The shell can read input only
+  from a firmware-described PL011 UART. USB HID keyboard, the laptop's
+  Qualcomm UART, GPU, Wi-Fi, Bluetooth, audio, camera and native panel drivers
+  remain unimplemented.
 - The physical laptop has not been booted. Its SPCR UART is interface `0x13`,
   not a PL011, and its eight-core SMP path is untested.
 - No performance claims. QEMU cannot model Snapdragon or Adreno performance.
@@ -180,10 +192,14 @@ From the repository root:
 # build/sketchos-esp.img, and copy images/.
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\build.ps1
 
+# Create a UEFI-bootable AArch64 ISO (requires xorriso in PATH).
+# The ISO and SHA-256/source-commit manifest are written under images/.
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\make-iso.ps1
+
 # Boot QEMU with a serial console window/log.
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\run-qemu.ps1
 
-# Automated boot validation (rebuilds, boots, checks the log, expects poweroff).
+# Automated boot validation (uses the dedicated smoke-test build and expects QEMU poweroff).
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\smoke-test.ps1 -TimeoutSeconds 180
 
 # Two PPTT clusters (QEMU -smp 8,clusters=2,cores=4).
@@ -411,6 +427,7 @@ laptop firmware facts, and unimplemented drivers. See
 - [Milestone 0.0.3 record](docs/milestone-0.0.3.md)
 - [Milestone 0.0.2 record](docs/milestone-0.0.2.md)
 - [Milestone 0.0.1 record](docs/milestone-0.0.1.md)
+- [Milestone 0.0.7 development notes](docs/milestone-0.0.7.md)
 - [Real-hardware bring-up](docs/real-hardware.md)
 
 ## Design rules

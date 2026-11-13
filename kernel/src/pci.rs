@@ -219,7 +219,7 @@ fn report_function(
         vendor,
         device_id,
         category,
-        class_subclass_name(class, subclass),
+        class_subclass_name(class, subclass, prog_if),
         bridge
     );
     if prog_if != 0 || revision != 0 {
@@ -370,21 +370,25 @@ fn class_name(class: u8) -> &'static str {
     }
 }
 
-fn class_subclass_name(class: u8, subclass: u8) -> &'static str {
-    match (class, subclass) {
-        (0x01, 0x06) => "SATA",
-        (0x01, 0x07) => "SAS",
-        (0x01, 0x08) => "NVMe",
-        (0x02, 0x00) => "ethernet",
-        (0x02, 0x80) => "other-network",
-        (0x03, 0x00) => "VGA",
-        (0x03, 0x80) => "other-display",
-        (0x06, 0x00) => "host-bridge",
-        (0x06, 0x01) => "ISA-bridge",
-        (0x06, 0x04) => "PCI-bridge",
-        (0x06, 0x09) => "PCIe-root-port",
-        (0x0c, 0x03) => "USB",
-        (0x0d, 0x11) => "Bluetooth",
-        _ => "device",
+fn class_subclass_name(class: u8, subclass: u8, prog_if: u8) -> &'static str {
+    match (class, subclass, prog_if) {
+        (0x0c, 0x03, 0x30) => "xHCI USB host controller",
+        (0x0c, 0x03, 0x20) => "EHCI USB host controller",
+        (0x0c, 0x03, 0x10) => "OHCI USB host controller",
+        (0x0c, 0x03, 0x00) => "UHCI USB host controller",
+        (0x01, 0x06, _) => "SATA",
+        (0x01, 0x07, _) => "SAS",
+        (0x01, 0x08, _) => "NVMe",
+        (0x02, 0x00, _) => "ethernet",
+        (0x02, 0x80, _) => "other-network",
+        (0x03, 0x00, _) => "VGA",
+        (0x03, 0x80, _) => "other-display",
+        (0x06, 0x00, _) => "host-bridge",
+        (0x06, 0x01, _) => "ISA-bridge",
+        (0x06, 0x04, _) => "PCI-bridge",
+        (0x06, 0x09, _) => "PCIe-root-port",
+        (0x0c, 0x03, _) => "USB host controller",
+        (0x0d, 0x11, _) => "Bluetooth",
+        (_, _, _) => "device",
     }
 }

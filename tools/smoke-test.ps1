@@ -47,9 +47,9 @@ $log = Join-Path $root 'build/serial.log'
 
 if (-not $NoBuild) {
     if ($Debug) {
-        & (Join-Path $PSScriptRoot 'build.ps1') -Debug
+        & (Join-Path $PSScriptRoot 'build.ps1') -SmokeTest -Debug
     } else {
-        & (Join-Path $PSScriptRoot 'build.ps1')
+        & (Join-Path $PSScriptRoot 'build.ps1') -SmokeTest
     }
 }
 
@@ -237,15 +237,15 @@ if (-not $finished) {
     $result = 1
 } else {
     $text = Get-Content $log -Raw
-    if ($text -notmatch 'SKETCHOS 0\.0\.6 KERNEL OK') {
+    if ($text -notmatch 'SKETCHOS 0\.0\.7 KERNEL OK') {
         Write-Host 'FAIL: kernel success marker missing.'
         $result = 1
     }
-    if ($text -notmatch 'SketchOS UEFI loader 0\.0\.6 \(AArch64\)') {
+    if ($text -notmatch 'SketchOS UEFI loader 0\.0\.7 \(AArch64\)') {
         Write-Host 'FAIL: loader banner is not 0.0.6.'
         $result = 1
     }
-    if ($text -notmatch 'SketchOS kernel 0\.0\.6 \(AArch64\)') {
+    if ($text -notmatch 'SketchOS kernel 0\.0\.7 \(AArch64\)') {
         Write-Host 'FAIL: kernel banner is not 0.0.6.'
         $result = 1
     }
