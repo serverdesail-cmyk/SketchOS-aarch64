@@ -55,7 +55,7 @@ The CI workflow now intends to run:
 4. A QEMU AArch64 UEFI boot of the generated ISO.
 5. Serial-log assertions for loader handoff, kernel entry, higher-half MMU, W^X, address-space and fault self-tests, userspace process cleanup, and QEMU power-off.
 
-The QEMU test is a regression gate, not proof of Qualcomm hardware support.
+The QEMU test is a regression gate, not proof of Qualcomm hardware support. The existing repository has legacy Rust files that do not pass a whole-workspace rustfmt check; this branch therefore enforces rustfmt on changed Rust files rather than rewriting unrelated code in a boot-fix patch.
 
 ## Known limitations / release blockers
 
