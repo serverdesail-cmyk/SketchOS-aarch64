@@ -274,27 +274,28 @@ el1_entry:
      */
     ldr     x9, [x20, #104]
     cbz     x9, 12f
-    movz    x10, #0xc000
+    movz    x10, #0x0000
+    movk    x10, #0xc000, lsl #32
     movk    x10, #0xffff, lsl #48
     add     x9, x9, x10
     ldr     w11, [x20, #120]
     mov     w12, #0x00ffffff
     mov     x13, #0
-10:
+.Lel1_fb_row:
     cmp     x13, #8
-    b.hs    12f
+    b.hs    .Lel1_fb_done
     mov     x14, #0
-11:
+.Lel1_fb_pixel:
     cmp     x14, #8
-    b.hs    13f
+    b.hs    .Lel1_fb_next_row
     madd    x15, x13, x11, x14
     str     w12, [x9, x15, lsl #2]
     add     x14, x14, #1
-    b       11b
-13:
+    b       .Lel1_fb_pixel
+.Lel1_fb_next_row:
     add     x13, x13, #1
-    b       10b
-12:
+    b       .Lel1_fb_row
+.Lel1_fb_done:
     dsb     sy
 
     /* Move to the higher half. The stack and the continuation are physical
