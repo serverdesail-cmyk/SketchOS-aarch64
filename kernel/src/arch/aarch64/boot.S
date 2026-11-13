@@ -151,13 +151,40 @@ el2_setup:
  * Clobbers x9/x10/x11 only.
  */
 el1_install:
+    /*
+     * UEFI may have entered us at EL1 with its own MMU already enabled.
+     * Replacing TTBR/TCR while SCTLR_EL1.M is set is architecturally unsafe:
+     * translations can be cached under the old regime while the new roots are
+     * only partially installed. We execute from the identity-mapped physical
+     * kernel image, so first turn off the EL1 MMU and its data/instruction
+     * caches, then install the complete new regime before enabling it.
+     *
+     * This is also safe when called from EL2: changing SCTLR_EL1 does not
+     * change the currently active EL2 translation regime.
+     */
+    mrs     x9, sctlr_el1
+    mov     x10, #1                 /* M */
+    bic     x9, x9, x10
+    mov     x10, #(1 << 2)          /* C */
+    bic     x9, x9, x10
+    mov     x10, #(1 << 12)         /* I */
+    bic     x9, x9, x10
+    msr     sctlr_el1, x9
+    dsb     sy
+    isb
+
     msr     ttbr0_el1, x21
     msr     ttbr1_el1, x22
     msr     tcr_el1, x23
     msr     mair_el1, x24
+    dsb     sy
+
+    /* Discard firmware TLB entries before enabling the new translation map. */
+    tlbi    vmalle1
+    dsb     ish
     isb
 
-    /* Read-modify-write keeps architectural RES1 bits firmware may have set. */
+    /* Read-modify-write preserves architectural RES1 bits and firmware state. */
     mrs     x9, sctlr_el1
     mov     x10, #1                 /* M */
     orr     x9, x9, x10
@@ -165,7 +192,7 @@ el1_install:
     orr     x9, x9, x10
     mov     x10, #(1 << 12)         /* I */
     orr     x9, x9, x10
-    /* Clear A, SA, SA0 and WXN. */
+    /* Keep alignment checking and WXN disabled during early bring-up. */
     mov     x10, #(1 << 1)
     bic     x9, x9, x10
     mov     x10, #(1 << 3)
@@ -175,11 +202,6 @@ el1_install:
     mov     x10, #(1 << 19)
     bic     x9, x9, x10
     msr     sctlr_el1, x9
-    isb
-
-    /* Discard firmware TLB entries that could alias the new tables. */
-    tlbi    vmalle1
-    dsb     ish
     isb
     ret
 
