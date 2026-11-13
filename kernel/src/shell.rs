@@ -74,7 +74,7 @@ pub fn run() -> ! {
                 println!("SketchOS 0.0.7 (AArch64)");
             }
             "cpus" => {
-                println!("online cores: {}", crate::percpu::records().len());
+                println!("online cores: {}", crate::smp::online_count());
             }
             "mem" => {
                 println!("phys allocator: see boot log");
@@ -83,14 +83,23 @@ pub fn run() -> ! {
                 if let Some(dev) = storage::device() {
                     println!("{}: {} sectors", dev.name(), dev.capacity_sectors());
                 } else {
-                    println!("no block device");
+                    println!("storage probing is deferred in early-shell mode");
                 }
             }
             "partitions" => {
-                partition::enumerate();
-                partition::report();
+                if storage::device().is_some() {
+                    partition::enumerate();
+                    partition::report();
+                } else {
+                    println!("partition scan unavailable: no block device has been initialized");
+                }
             }
             "mkfs" => {
+                if storage::device().is_none() {
+                    println!("mkfs unavailable: no block device has been initialized");
+                    continue;
+                }
+                partition::enumerate();
                 let mut args = parts;
                 let part_idx: usize = args.next().and_then(|s| s.parse().ok()).unwrap_or(0);
                 let fstype = args.next().unwrap_or("ext2");
