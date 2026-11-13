@@ -174,6 +174,15 @@ fn main() -> Status {
         uefi::println!("Debug UART: none described by firmware");
     }
 
+    // Put the final handoff marker at the absolute top-left of the UEFI
+    // text console. Keep it visible while ExitBootServices and the branch to
+    // the kernel happen; if it remains here, the kernel entry did not report
+    // progress back to the display.
+    system::with_stdout(|stdout| {
+        let _ = stdout.set_cursor_position(0, 0);
+    });
+    uefi::println!("HANDOFF: ENTERING KERNEL");
+
     // `enter` consumes every remaining Boot Service resource and never
     // returns. Nothing below may allocate or print through UEFI.
     unsafe { handoff::enter(info, kernel) }
