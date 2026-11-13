@@ -47,9 +47,9 @@ $log = Join-Path $root 'build/serial.log'
 
 if (-not $NoBuild) {
     if ($Debug) {
-        & (Join-Path $PSScriptRoot 'build.ps1') -Debug
+        & (Join-Path $PSScriptRoot 'build.ps1') -SmokeTest -Debug
     } else {
-        & (Join-Path $PSScriptRoot 'build.ps1')
+        & (Join-Path $PSScriptRoot 'build.ps1') -SmokeTest
     }
 }
 
