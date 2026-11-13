@@ -83,7 +83,8 @@ _start:
     add     x2, x2, :lo12:__bss_start
     adrp    x3, __bss_end
     add     x3, x3, :lo12:__bss_end
-    bic     x2, x2, x5
+    sub     x6, x5, #1
+    bic     x2, x2, x6
 3:
     cmp     x2, x3
     b.hs    4f
