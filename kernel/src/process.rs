@@ -1091,7 +1091,7 @@ pub fn poweroff_requested() -> ! {
     aarch64::halt()
 }
 
-/// Print the process summary and request power-off.
+/// Print the process summary and terminate only in the dedicated smoke-test build.
 pub fn finish() -> ! {
     println!();
     println!("SKETCHOS 0.0.6 KERNEL OK");
