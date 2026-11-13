@@ -1,4 +1,4 @@
-//! Interactive shell (milestone 0.0.7), opt-in via `--features shell`.
+//! Interactive shell (milestone 0.0.7), enabled by the normal build script.
 //!
 //! Reads a line from the PL011 RX FIFO and dispatches a small command set.
 //! Polling-based; no allocation, no blocking syscall. `poweroff` exits.
