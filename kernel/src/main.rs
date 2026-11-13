@@ -316,6 +316,23 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
     if let Err(reason) = selftest::heap_test() {
         fatal(&info, Some(platform), reason);
     }
+
+    // A normal shell build is a bring-up image, not the scheduler benchmark.
+    // Enter the shell as soon as the minimum safe kernel services are ready.
+    // This keeps optional device probing, secondary-CPU startup and the EL0
+    // stress workloads from hiding the first usable prompt behind unrelated
+    // subsystems. On machines without a supported PL011 RX path, shell::run()
+    // prints the exact limitation and parks without powering the machine off.
+    #[cfg(feature = "shell")]
+    {
+        println!();
+        println!("BOOT: core initialization complete");
+        println!("BOOT: entering interactive shell");
+        shell::run();
+    }
+
+    #[cfg(not(feature = "shell"))]
+    {
         println!("BOOT STAGE: heap ready; probing devices");
         storage::probe();
         net::probe();
@@ -381,6 +398,7 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
     println!("BOOT STAGE: scheduler ready; releasing CPUs");
     smp::release_scheduler();
     sched::start()
+    }
 }
 
 /// Report a fatal pre-scheduler error and terminate cleanly under QEMU.
