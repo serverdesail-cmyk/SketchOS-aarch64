@@ -1094,7 +1094,7 @@ pub fn poweroff_requested() -> ! {
 /// Print the process summary and terminate only in the dedicated smoke-test build.
 pub fn finish() -> ! {
     println!();
-    println!("SKETCHOS 0.0.6 KERNEL OK");
+    println!("SKETCHOS 0.0.7 KERNEL OK");
 
     // Automatic power-off exists only in the dedicated QEMU smoke-test build.
     gic::disable_irq();
@@ -1116,7 +1116,7 @@ pub fn finish() -> ! {
 /// for diagnosis; only the dedicated smoke-test build may power off QEMU.
 pub fn fail(reason: &str) -> ! {
     println!();
-    println!("SKETCHOS 0.0.6 KERNEL FAILED: {}", reason);
+    println!("SKETCHOS 0.0.7 KERNEL FAILED: {}", reason);
     gic::disable_irq();
     if cfg!(feature = "smoke-test") {
         if let Some(use_hvc) = smp::power_off() {
