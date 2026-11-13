@@ -11,12 +11,27 @@ if ! command -v "$QEMU" >/dev/null 2>&1; then
 fi
 
 find_first() {
-  local pattern="$1"
-  find /usr/share \( -type f -o -type l \) -iname "$pattern" -print -quit 2>/dev/null || true
+  local candidate
+  for candidate in "$@"; do
+    if [[ -f "$candidate" ]]; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+  return 1
 }
 
-CODE="${AAVMF_CODE:-$(find_first AAVMF_CODE.fd)}"
-VARS_TEMPLATE="${AAVMF_VARS:-$(find_first AAVMF_VARS.fd)}"
+CODE="${AAVMF_CODE:-$(find_first /usr/share/AAVMF/AAVMF_CODE.fd /usr/share/qemu-efi-aarch64/QEMU_EFI.fd /usr/share/qemu/edk2-aarch64-code.fd)}"
+VARS_TEMPLATE="${AAVMF_VARS:-$(find_first /usr/share/AAVMF/AAVMF_VARS.fd /usr/share/qemu-efi-aarch64/QEMU_EFI_VARS.fd /usr/share/qemu/edk2-arm-vars.fd)}"
+
+# Ubuntu's compact QEMU_EFI.fd is 2 MiB; pflash firmware needs a 64 MiB
+# container. AAVMF_CODE.fd is already the full-size image.
+if [[ -n "$CODE" && $(stat -c '%s' "$CODE") -lt 67108864 ]]; then
+  mkdir -p build
+  truncate -s 64M build/aavmf-code.fd
+  dd if="$CODE" of=build/aavmf-code.fd conv=notrunc status=none
+  CODE="$ROOT/build/aavmf-code.fd"
+fi
 if [[ -z "$CODE" || -z "$VARS_TEMPLATE" ]]; then
   echo "ERROR: AArch64 UEFI firmware (AAVMF_CODE.fd/AAVMF_VARS.fd) was not found" >&2
   exit 2
