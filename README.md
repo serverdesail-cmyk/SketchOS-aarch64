@@ -13,7 +13,12 @@ and every change is validated in QEMU before it is considered working.
 
 ## Project status
 
-**Milestone 0.0.6 is verified under QEMU** (2026-11-12). The kernel now runs an
+**Milestone 0.0.6 is verified under QEMU** (2026-11-12).
+
+A 0.0.7 development branch adds a persistent post-test lifecycle and a small
+PL011-serial shell. It is staged but not yet built or verified; see
+[docs/milestone-0.0.7.md](docs/milestone-0.0.7.md). The laptop's Qualcomm UART,
+USB keyboard and ACPI power-button event path are still unsupported. The kernel now runs an
 EEVDF scheduler with one run queue per core, cluster-aware work stealing driven
 by ACPI PPTT, one-shot per-core `CNTP` timers with tickless idle, a debug-only
 invariant checker, and per-thread wake-latency/run-delay diagnostics. It keeps
@@ -412,6 +417,7 @@ laptop firmware facts, and unimplemented drivers. See
 - [Milestone 0.0.3 record](docs/milestone-0.0.3.md)
 - [Milestone 0.0.2 record](docs/milestone-0.0.2.md)
 - [Milestone 0.0.1 record](docs/milestone-0.0.1.md)
+- [Milestone 0.0.7 development notes](docs/milestone-0.0.7.md)
 - [Real-hardware bring-up](docs/real-hardware.md)
 
 ## Design rules
