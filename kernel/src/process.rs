@@ -1096,32 +1096,34 @@ pub fn finish() -> ! {
     println!();
     println!("SKETCHOS 0.0.6 KERNEL OK");
 
-    // Keep another timer tick from interrupting the final halt/power-off path.
+    // Automatic power-off exists only in the dedicated QEMU smoke-test build.
     gic::disable_irq();
     if cfg!(feature = "smoke-test") {
         if let Some(use_hvc) = smp::power_off() {
             println!("QEMU: requesting PSCI SYSTEM_OFF");
-        // SAFETY: the FADT declared PSCI and the conduit used here.
-        match unsafe { aarch64::psci_system_off(use_hvc) } {
-            Ok(()) => println!("QEMU: PSCI SYSTEM_OFF returned unexpectedly"),
-            Err(code) => println!("QEMU: PSCI SYSTEM_OFF rejected (error {})", code),
+            // SAFETY: the FADT declared PSCI and the conduit used here.
+            match unsafe { aarch64::psci_system_off(use_hvc) } {
+                Ok(()) => println!("QEMU: PSCI SYSTEM_OFF returned unexpectedly"),
+                Err(code) => println!("QEMU: PSCI SYSTEM_OFF rejected (error {})", code),
+            }
         }
     }
     println!("Halting: userspace phase complete");
     aarch64::halt()
 }
 
-/// Report a user-phase setup failure and power the machine off without the
-/// success marker.
+/// Report a user-phase setup failure. Normal builds remain powered and halt
+/// for diagnosis; only the dedicated smoke-test build may power off QEMU.
 pub fn fail(reason: &str) -> ! {
     println!();
     println!("SKETCHOS 0.0.6 KERNEL FAILED: {}", reason);
     gic::disable_irq();
-    if let Some(use_hvc) = smp::power_off() {
-        println!("QEMU: requesting PSCI SYSTEM_OFF");
-        // SAFETY: the FADT declared PSCI and the conduit used here.
-        match unsafe { aarch64::psci_system_off(use_hvc) } {
-            Ok(()) => println!("QEMU: PSCI SYSTEM_OFF returned unexpectedly"),
+    if cfg!(feature = "smoke-test") {
+        if let Some(use_hvc) = smp::power_off() {
+            println!("QEMU: requesting PSCI SYSTEM_OFF");
+            // SAFETY: the FADT declared PSCI and the conduit used here.
+            match unsafe { aarch64::psci_system_off(use_hvc) } {
+                Ok(()) => println!("QEMU: PSCI SYSTEM_OFF returned unexpectedly"),
                 Err(code) => println!("QEMU: PSCI SYSTEM_OFF rejected (error {})", code),
             }
         }
