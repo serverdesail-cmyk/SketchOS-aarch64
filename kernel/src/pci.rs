@@ -376,9 +376,9 @@ fn class_subclass_name(class: u8, subclass: u8, prog_if: u8) -> &'static str {
         (0x0c, 0x03, 0x20) => "EHCI USB host controller",
         (0x0c, 0x03, 0x10) => "OHCI USB host controller",
         (0x0c, 0x03, 0x00) => "UHCI USB host controller",
-        (_, 0x06, _) => "SATA",
-        (_, 0x07, _) => "SAS",
-        (_, 0x08, _) => "NVMe",
+        (0x01, 0x06, _) => "SATA",
+        (0x01, 0x07, _) => "SAS",
+        (0x01, 0x08, _) => "NVMe",
         (0x02, 0x00, _) => "ethernet",
         (0x02, 0x80, _) => "other-network",
         (0x03, 0x00, _) => "VGA",
@@ -388,7 +388,7 @@ fn class_subclass_name(class: u8, subclass: u8, prog_if: u8) -> &'static str {
         (0x06, 0x04, _) => "PCI-bridge",
         (0x06, 0x09, _) => "PCIe-root-port",
         (0x0c, 0x03, _) => "USB host controller",
-        (0x0d, 0x11) => "Bluetooth",
+        (0x0d, 0x11, _) => "Bluetooth",
         (_, _, _) => "device",
     }
 }
