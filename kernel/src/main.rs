@@ -65,6 +65,9 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
         let raw_info = unsafe {
             core::ptr::read_volatile(phys_to_virt(boot_info_addr) as *const BootInfo)
         };
+        if raw_info.has_flag(FLAG_UART) && raw_info.uart_kind == uart_kind::PL011 {
+            console::init(raw_info.uart_base);
+        }
         if raw_info.has_flag(FLAG_FRAMEBUFFER) {
             let _ = console::init_framebuffer(&raw_info.framebuffer);
             framebuffer_console = console::framebuffer_active();
