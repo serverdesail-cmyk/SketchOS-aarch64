@@ -8,7 +8,7 @@
 use uefi::boot::{self, OpenProtocolAttributes, OpenProtocolParams};
 use uefi::proto::pci::root_bridge::PciRootBridgeIo;
 
-const PCI_COMMAND: u32 = 0x04;
+const PCI_COMMAND: u8 = 0x04;
 const PCI_COMMAND_BUS_MASTER: u16 = 1 << 2;
 
 /// Clear Bus Master Enable on every PCI function reachable through UEFI root
