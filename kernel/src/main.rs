@@ -104,7 +104,7 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
     let mmu_result = arch::aarch64::mmu::init(&info, platform.as_ref());
 
     println!();
-    println!("SketchOS kernel 0.0.7 (AArch64)");
+    println!("SketchOS kernel 0.0.8 (AArch64)");
     println!(
         "Exceptions: VBAR_EL{} 0x{:016x}, table aligned: {}",
         arch::aarch64::current_el(),
