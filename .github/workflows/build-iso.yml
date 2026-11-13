@@ -1,6 +1,7 @@
-name: Build SketchOS AArch64 ISO
+name: SketchOS AArch64 validation and ISO
 
 on:
+  pull_request:
   push:
     branches: [main]
     paths-ignore:
@@ -12,8 +13,9 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  validate:
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -24,26 +26,38 @@ jobs:
           rustup toolchain install 1.99.1 --profile minimal \
             --target aarch64-unknown-none,aarch64-unknown-uefi
           rustup default 1.99.1
+          rustup component add rustfmt
 
-      - name: Install image tools
+      - name: Install build and emulator tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y dosfstools mtools xorriso
+          sudo apt-get install -y dosfstools mtools xorriso qemu-system-arm qemu-efi-aarch64
 
-      - name: Build ISO
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run host-side memory and scheduler tests
+        run: cargo test --locked -p sketchos-mm -p sketchos-sched-core
+
+      - name: Build UEFI loader, kernel, userspace and ISO
         run: bash tools/build-iso.sh
 
-      - name: Upload ISO artifact
+      - name: Boot the actual ISO under AArch64 QEMU
+        run: bash tools/smoke-test-linux.sh
+
+      - name: Upload validated ISO
         uses: actions/upload-artifact@v4
         with:
           name: SketchOS-AArch64-ISO
           path: |
             images/SketchOS-AArch64.iso
             images/SketchOS-AArch64.iso.sha256
+            build/qemu-smoke-serial.log
           if-no-files-found: error
           retention-days: 30
 
       - name: Commit ISO to main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
