@@ -64,6 +64,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\\tools\\build.ps1 -NoShell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\\tools\\smoke-test.ps1 -TimeoutSeconds 180
 ```
 
+## Hardware discovery and input limitations
+
+PCIe inventory now classifies USB host-controller programming interfaces, including xHCI (interface 0x30), EHCI, OHCI and UHCI. This identifies a host controller only; it does not enumerate USB ports, read USB device descriptors, parse HID report descriptors, or deliver keyboard reports. No USB HID keyboard is claimed to work yet.
+
+The target laptop may expose its built-in keyboard and touchpad through an ACPI-described I2C-HID path rather than a USB HID interface. That requires AML namespace/device-resource discovery, the relevant I2C controller driver, GPIO/interrupt support and the HID-over-I2C transport. Those pieces are not implemented. The next input milestone must identify the actual ACPI and PCI topology from this laptop before selecting the transport.
+
+## ISO packaging
+
+`tools/make-iso.ps1` packages the FAT32 EFI System Partition image as an AArch64 UEFI El Torito boot image. It requires `xorriso` on PATH and writes `images/SketchOS-AArch64.iso`. The `Build AArch64 ISO` GitHub Actions workflow builds the pinned Rust targets on Ubuntu, creates the ISO, and commits the generated ISO into this branch. The workflow does not flash any physical drive.
+
 ## Hardware limitations
 
 This milestone does **not** implement:
