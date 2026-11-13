@@ -50,6 +50,9 @@ jobs:
       - name: Build UEFI loader, kernel, userspace and ISO
         run: bash tools/build-iso.sh
 
+      - name: Check smoke test script syntax
+        run: bash -n tools/smoke-test-linux.sh
+
       - name: Boot the actual ISO under AArch64 QEMU
         run: bash tools/smoke-test-linux.sh
 
