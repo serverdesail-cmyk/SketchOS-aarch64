@@ -124,10 +124,17 @@ output. That is a known limitation, not a successful boot.
    - the EEVDF scheduler lines: 8 per-core run queues, steals/migrations,
      one-shot timer events and idle disarms,
    - the user-phase lines, if the kernel reaches EL0 on the laptop,
-   - `SKETCHOS 0.0.6 KERNEL OK` if the run completes.
-7. The kernel powers off through PSCI only when it recognizes QEMU. On the
-   laptop it halts instead, so a completed demo ends in a halted machine rather
-   than a power-off. Hold the power button to turn it off.
+   - the shell banner if a supported PL011 receive device is present;
+   - the QEMU success marker only when using the dedicated smoke-test build.
+7. In a normal interactive build, completion of the embedded test workload
+   enters the shell. Shell input currently uses only a firmware-described
+   PL011 UART. This laptop reports a Qualcomm UART, and USB keyboard input is
+   not implemented, so the shell reports that input is unavailable and the
+   kernel remains powered in an interruptible WFI idle loop.
+8. The `poweroff` command requests PSCI SYSTEM_OFF only after an explicit
+   command and only when ACPI FADT declares PSCI compliance. ACPI power-button
+   event handling is not implemented yet. Until it is, use the laptop's
+   physical long-press power-button fallback to turn it off.
 8. Remove the USB medium and restore the original boot order.
 
 ## What to record
@@ -144,7 +151,8 @@ output. That is a known limitation, not a successful boot.
 
 ## Known blockers
 
-- No non-PL011 UART driver, so no serial diagnostics.
+- No non-PL011 UART driver, so no serial diagnostics or serial shell input.
+- No USB HID keyboard driver or ACPI power-button event handler.
 - No storage driver, so no installation or persistent logs.
 - No GPU/panel driver; only the GOP framebuffer console, if firmware provides
   one.
