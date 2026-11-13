@@ -242,8 +242,8 @@ el1_install:
     /* Enable the new translation roots from a known EL1 state. This is the
      * minimal Linux-style AArch64 baseline: RES1 plus M/C/I, little-endian,
      * with optional controls left disabled until the kernel configures them. */
-    movz    x9, #0x1805
-    movk    x9, #0x3050, lsl #16   /* SCTLR_EL1_RES1 | M | C | I */
+    movz    x9, #0x181d
+    movk    x9, #0x3050, lsl #16   /* SCTLR_EL1_RES1 | M | C | I | SA | SA0 */
     msr     sctlr_el1, x9
     isb
     ret
