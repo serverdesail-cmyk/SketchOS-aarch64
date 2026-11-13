@@ -54,20 +54,23 @@ _start:
      * through firmware's unknown VBAR and is effectively silent. The full
      * vector table uses SIMD registers, so grant FP access before enabling it.
      */
+    mov     x9, #(3 << 20)          /* CPACR_EL1.FPEN = 0b11 */
+    msr     cpacr_el1, x9
     cmp     x19, #2
     b.hi    1f
+    cmp     x19, #2
+    b.ne    2f
+    mrs     x10, cptr_el2
+    bic     x10, x10, #(1 << 10)    /* TFP: allow Q-register saves in EL2 vectors */
+    msr     cptr_el2, x10
+2:
     adrp    x9, exception_vectors
     add     x9, x9, :lo12:exception_vectors
     msr     vbar_el1, x9
     cmp     x19, #2
     b.ne    1f
     msr     vbar_el2, x9
-    mrs     x10, cptr_el2
-    bic     x10, x10, #(1 << 10)    /* TFP: allow Q-register saves in EL2 vectors */
-    msr     cptr_el2, x10
 1:
-    mov     x9, #(3 << 20)          /* CPACR_EL1.FPEN = 0b11 */
-    msr     cpacr_el1, x9
     isb
 
     /* Load the translation plan before any register is reused. */
