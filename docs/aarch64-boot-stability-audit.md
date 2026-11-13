@@ -8,7 +8,7 @@ Scope: UEFI loader, ELF loader, boot-info ABI, AArch64 entry assembly, page-tabl
 
 SketchOS is a freestanding AArch64 operating system with a custom UEFI loader and Rust kernel. It is not a Linux kernel source tree. Linux's arm64 boot protocol is therefore used as an architectural reference, not as a claim that SketchOS is Linux ABI-compatible.
 
-The primary reference is the [Linux arm64 boot protocol](https://docs.kernel.org/arch/arm64/booting.html). It specifies masked interrupts, MMU-off entry, kernel image cache maintenance to the point of coherency, consistent timer state, CPU coherency, and initialized architectural system registers. SketchOS currently uses a custom handoff with its own BootInfo and translation roots; deviations from the Linux entry contract must remain explicit and tested.
+The primary reference is the [Linux arm64 boot protocol](https://docs.kernel.org/arch/arm64/booting.html). It specifies masked interrupts, MMU-off entry, kernel image cache maintenance to the point of coherency, consistent timer state, CPU coherency, and initialized architectural system registers. SketchOS currently uses a custom handoff with its own BootInfo and translation roots. Unlike Linux's standard entry contract, the loader currently enters the kernel with its bootstrap MMU/cache regime enabled; the kernel then clears BSS, cleans those cache lines, disables EL1 translation/cache state, installs its own roots, and re-enables the regime. This is an intentional custom protocol, not Linux arm64 boot-protocol compliance, and must remain explicit and covered by regression tests.
 
 ## Findings addressed in this branch
 
@@ -26,7 +26,13 @@ The new entry path reads `CTR_EL0.DminLine`, aligns the BSS start down to the da
 
 The loader already cleans the loaded kernel image, boot-info record, final memory map, and bootstrap page-table pool before entering the kernel.
 
-### 3. The final UEFI memory map could be silently truncated
+### 3. PCI bus mastering could continue DMA into kernel-owned RAM
+
+Linux's arm64 boot protocol explicitly requires DMA-capable devices to be quiesced before kernel entry. The loader previously left PCI bus-master enable bits untouched, allowing a firmware-enabled device to continue writing into RAM after the kernel began allocating it.
+
+The loader now enumerates UEFI PCI root bridges, walks their PCI topology, and clears the PCI Command register's Bus Master Enable bit on discovered functions after all file and firmware I/O has completed. Failures are counted and reported. This covers PCI devices exposed through UEFI root-bridge protocols; it does not yet prove that every SoC-integrated/non-PCI DMA engine or IOMMU is quiesced on the Snapdragon platform.
+
+### 4. The final UEFI memory map could be silently truncated
 
 The loader allocated a descriptor array with slack, but silently stopped copying if the final UEFI map exceeded that capacity. A truncated map can cause the kernel to misclassify reserved memory or miss RAM ranges. The handoff now fails closed instead of passing a partial map to the kernel.
 
@@ -38,6 +44,8 @@ UEFI requires the loader to use the current memory-map key for `ExitBootServices
 - UEFI memory-map normalization and `ExitBootServices()` handoff.
 - BootInfo version/size fields and translation-root metadata.
 - EL2-to-EL1 and direct EL1 entry paths.
+- Primary/secondary CNTVOFF setup when entering through EL2, plus CNTHCTL access policy.
+- UEFI PCI root-bridge enumeration and PCI Command.BusMasterEnable clearing.
 - TTBR0 bootstrap identity map and TTBR1 higher-half/physical map.
 - TCR/MAIR setup and page-table descriptor attributes.
 - Kernel W^X segment mapping and low-half sealing.
@@ -60,9 +68,10 @@ The QEMU test is a regression gate, not proof of Qualcomm hardware support. The 
 ## Known limitations / release blockers
 
 - No physical HP OmniBook X test has been completed by this audit.
+- PCI DMA quiescence covers functions reachable through UEFI PCI root-bridge protocols; Qualcomm SoC DMA engines and IOMMU/SMMU state still need platform-specific verification.
 - No Qualcomm-specific UART, interrupt-controller, storage, USB, I2C, GPIO, touchscreen, keyboard, touchpad, Wi-Fi, or Adreno display/GPU driver has been validated on the laptop.
 - QEMU's `virt` machine is not a model of the Snapdragon X platform.
-- The current kernel has a custom handoff and does not claim Linux arm64 Image/DT boot-protocol compatibility.
+- The current kernel has a custom MMU-on UEFI handoff and does not claim Linux arm64 Image/DT boot-protocol compatibility.
 - A passing build and QEMU smoke test cannot guarantee operation on every AArch64 implementation.
 
 ## Release acceptance
