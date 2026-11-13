@@ -68,6 +68,7 @@ require() {
 
 require 'SketchOS UEFI loader 0\\.0\\.6 \\(AArch64\\)' 'UEFI loader banner missing'
 require 'HANDOFF: ENTERING KERNEL' 'loader did not reach the kernel handoff'
+require 'PCI DMA:' 'PCI DMA quiescence path did not run'
 require 'SketchOS kernel 0\\.0\\.6 \\(AArch64\\)' 'kernel banner missing'
 require 'MMU: higher half, TTBR1 0x[0-9a-f]+, TTBR0 boot 0x[0-9a-f]+' 'kernel did not install its own higher-half map'
 require 'MMU: W\\^X audit clean' 'kernel W^X audit failed or did not run'
