@@ -74,7 +74,10 @@ pub fn quiesce_pci_bus_masters() {
                 command_address,
                 command & !PCI_COMMAND_BUS_MASTER,
             ) {
-                Ok(()) => disabled += 1,
+                Ok(()) => match pci.read_one::<u16>(command_address) {
+                    Ok(updated) if updated & PCI_COMMAND_BUS_MASTER == 0 => disabled += 1,
+                    _ => failures += 1,
+                },
                 Err(_) => failures += 1,
             }
         }
