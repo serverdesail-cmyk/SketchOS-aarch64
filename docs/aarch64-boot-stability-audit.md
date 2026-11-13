@@ -65,10 +65,13 @@ The CI workflow now intends to run:
 
 The QEMU test is a regression gate, not proof of Qualcomm hardware support. The existing repository has legacy Rust files that do not pass a whole-workspace rustfmt check; this branch therefore enforces rustfmt on changed Rust files rather than rewriting unrelated code in a boot-fix patch.
 
+The boot assembly now paints an **8×8 white framebuffer checkpoint** immediately after entering EL1 with the new MMU active, then a **16×16 green checkpoint** after branching into the higher half. On the laptop: no white marker means failure before EL1 entry; white but no green means failure during the higher-half transition; green means the kernel reached the higher-half checkpoint (but not necessarily Rust `kmain`).
+
 ## Known limitations / release blockers
 
 - No physical HP OmniBook X test has been completed by this audit.
 - PCI DMA quiescence covers functions reachable through UEFI PCI root-bridge protocols; Qualcomm SoC DMA engines and IOMMU/SMMU state still need platform-specific verification.
+- The current release build emits 37 Rust warnings, mostly unused/incomplete code plus five references to `static mut`. These need a separate safety cleanup before describing the whole kernel as production-stable.
 - No Qualcomm-specific UART, interrupt-controller, storage, USB, I2C, GPIO, touchscreen, keyboard, touchpad, Wi-Fi, or Adreno display/GPU driver has been validated on the laptop.
 - QEMU's `virt` machine is not a model of the Snapdragon X platform.
 - The current kernel has a custom MMU-on UEFI handoff and does not claim Linux arm64 Image/DT boot-protocol compatibility.
@@ -86,3 +89,10 @@ Do not label a release hardware-stable until all of the following are true:
 - A recovery path is tested before changing firmware boot order or installing to internal storage.
 
 A claim of "guaranteed to work" is not technically supportable without defining the supported hardware/firmware matrix and testing every supported configuration.
+
+## Reference documents
+
+- [Linux AArch64 boot protocol](https://docs.kernel.org/arch/arm64/booting.html) — entry exception level, MMU/cache state, DMA quiescence, timers, coherency and system-register requirements.
+- [Linux arm64 `SCTLR_EL1_RES1` definition](https://kernel.googlesource.com/pub/scm/linux/kernel/git/torvalds/linux/%2B/3c730b1041aefa2a92b96fcba9db237d28585922/arch/arm64/include/asm/sysreg.h) — the RES1 mask used for the EL1 baseline in this branch.
+- [UEFI 2.10 Boot Services](https://uefi.org/specs/UEFI/2.10/07_Services_Boot_Services.html) — memory-map key and `ExitBootServices()` requirements.
+- [UEFI Rust crate 0.41 boot services](https://docs.rs/uefi/0.41.0/uefi/boot/fn.exit_boot_services.html) — the API used by the loader to obtain the final map and exit Boot Services.
