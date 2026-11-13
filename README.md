@@ -190,8 +190,7 @@ From the repository root:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\build.ps1
 
 # Create a UEFI-bootable AArch64 ISO (requires xorriso in PATH).
-# The ISO is written to images/SketchOS-AArch64.iso.
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\build.ps1
+# The ISO and SHA-256/source-commit manifest are written under images/.
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\make-iso.ps1
 
 # Boot QEMU with a serial console window/log.
