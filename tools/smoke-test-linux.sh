@@ -86,12 +86,12 @@ require() {
   fi
 }
 
-require 'SketchOS UEFI loader 0\\.0\\.6 \(AArch64\)' 'UEFI loader banner missing'
+require 'SketchOS UEFI loader 0\.0\.6 \(AArch64\)' 'UEFI loader banner missing'
 require 'HANDOFF: ENTERING KERNEL' 'loader did not reach the kernel handoff'
 require 'PCI DMA:' 'PCI DMA quiescence path did not run'
-require 'SketchOS kernel 0\\.0\\.6 \(AArch64\)' 'kernel banner missing'
+require 'SketchOS kernel 0\.0\.6 \(AArch64\)' 'kernel banner missing'
 require 'MMU: higher half, TTBR1 0x[0-9a-f]+, TTBR0 boot 0x[0-9a-f]+' 'kernel did not install its own higher-half map'
-require 'MMU: W\\^X audit clean' 'kernel W^X audit failed or did not run'
+require 'MMU: W\^X audit clean' 'kernel W^X audit failed or did not run'
 require 'MMU: address-space self-test passed' 'address-space self-test failed'
 require 'MMU: fault self-test passed' 'recoverable-fault self-test failed'
 require 'MMU: TTBR0 walks disabled; low half sealed' 'low-half sealing did not complete'
