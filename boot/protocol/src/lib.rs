@@ -142,7 +142,7 @@ pub mod memory_kind {
     }
 }
 
-/// Debug UART kinds. Only `PL011` is driven by the 0.0.2 kernel.
+/// Debug UART kinds normalized from the ACPI SPCR interface type.
 pub mod uart_kind {
     pub const NONE: u32 = 0;
     /// ARM PL011 (ACPI SPCR interface type 0x03).
