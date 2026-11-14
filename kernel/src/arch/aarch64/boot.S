@@ -69,6 +69,8 @@ _start:
     msr     vbar_el1, x9
     cmp     x19, #2
     b.ne    1f
+    adrp    x9, early_el2_vectors
+    add     x9, x9, :lo12:early_el2_vectors
     msr     vbar_el2, x9
 1:
     isb
@@ -537,3 +539,39 @@ secondary_park:
     b       secondary_park
 
     .size secondary_entry, . - secondary_entry
+
+
+// EL2 is used only for the short firmware-to-EL1 transition. The general
+// exception_vectors table is an EL1 context-switch path and must not be used
+// to return from EL2. Any exception before ERET is recorded and parked here.
+.align 11
+.global early_el2_vectors
+early_el2_vectors:
+.rept 16
+    b early_el2_fault
+    .space 124
+.endr
+
+early_el2_fault:
+    msr daifset, #0xf
+    mrs x0, esr_el2
+    mrs x1, elr_el2
+    mrs x2, spsr_el2
+    mrs x3, far_el2
+    mrs x4, hpfar_el2
+    mrs x5, sctlr_el2
+    adrp x6, __early_el2_fault_record
+    add x6, x6, :lo12:__early_el2_fault_record
+    stp x0, x1, [x6]
+    stp x2, x3, [x6, #16]
+    stp x4, x5, [x6, #32]
+    dsb sy
+2:
+    wfe
+    b 2b
+
+.section .bss, "aw", %nobits
+.align 3
+.global __early_el2_fault_record
+__early_el2_fault_record:
+    .skip 48
