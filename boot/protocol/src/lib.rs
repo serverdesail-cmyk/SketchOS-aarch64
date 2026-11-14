@@ -153,6 +153,9 @@ pub mod uart_kind {
     pub const SBSA: u32 = 3;
     /// Any other firmware-described UART, recorded but not driven yet.
     pub const OTHER: u32 = 4;
+    /// Qualcomm GENI Serial Engine UART (ACPI SPCR interface type 0x13).
+    /// The SPCR type identifies the SDM845 7.372 MHz UART programming model.
+    pub const SDM845_GENI: u32 = 5;
 
     pub fn name(kind: u32) -> &'static str {
         match kind {
@@ -161,6 +164,7 @@ pub mod uart_kind {
             UART16550 => "16550",
             SBSA => "sbsa",
             OTHER => "other",
+            SDM845_GENI => "sdm845-geni",
             _ => "unknown",
         }
     }
