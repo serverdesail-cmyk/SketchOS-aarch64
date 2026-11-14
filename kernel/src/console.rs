@@ -116,16 +116,24 @@ pub fn init_geni(base: u64) -> Result<(), &'static str> {
         return Err("GENI UART base is zero or unaligned");
     }
 
-    // SAFETY: the physical base comes from the validated firmware SPCR table
-    // and the loader maps the described UART window as Device memory.
-    let revision = unsafe { mmio_read(base, GENI_FW_REVISION_RO) };
+    // SPCR is validated by the loader and the linear map covers this range,
+    // but the QUP power domain may still be off. Contain an external abort
+    // while checking the firmware protocol instead of crashing the kernel.
+    let virtual_base = phys_to_virt(base) as u64;
+    let revision = crate::arch::aarch64::probe_read32(
+        virtual_base + GENI_FW_REVISION_RO as u64,
+    )
+    .map_err(|_| "GENI UART MMIO window is not accessible")?;
     let protocol = (revision & GENI_PROTOCOL_MASK) >> GENI_PROTOCOL_SHIFT;
     if protocol != GENI_PROTOCOL_UART {
         return Err("GENI firmware is not configured for UART");
     }
 
     // Never write the FIFO if firmware left the engine in DMA mode.
-    let mode = unsafe { mmio_read(base, GENI_DMA_MODE_EN) };
+    let mode = crate::arch::aarch64::probe_read32(
+        virtual_base + GENI_DMA_MODE_EN as u64,
+    )
+    .map_err(|_| "GENI UART DMA-mode register is not accessible")?;
     if mode & GENI_DMA_MODE != 0 {
         return Err("GENI UART is in DMA mode; polling FIFO output is unsafe");
     }
