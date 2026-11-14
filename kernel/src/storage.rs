@@ -80,7 +80,8 @@ pub mod virtio {
         used_idx: *mut u16,
     }
 
-    unsafe impl Sync for VirtioMmioBlock {}
+    // SAFETY: the block device is moved into DEVICE and all access is serialized
+    // by the enclosing IrqSpinLock; the raw queue pointers never escape it.
     unsafe impl Send for VirtioMmioBlock {}
 
     impl VirtioMmioBlock {
