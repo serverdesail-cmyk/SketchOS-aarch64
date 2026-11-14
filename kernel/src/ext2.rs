@@ -19,7 +19,13 @@ pub fn format_qemu_test_disk(
     if !qemu_virt {
         return Err("experimental ext2 formatter is disabled on physical hardware");
     }
-    storage::capacity_sectors().ok_or("no block device")?;
+    let capacity = storage::capacity_sectors().ok_or("no block device")?;
+    if start_lba
+        .checked_add(num_sectors)
+        .map_or(true, |end| end > capacity)
+    {
+        return Err("format range exceeds the test block device");
+    }
     let total_blocks = (num_sectors * 512 / BLOCK_SIZE as u64) as u32;
     if total_blocks < 64 { return Err("partition too small"); }
 
