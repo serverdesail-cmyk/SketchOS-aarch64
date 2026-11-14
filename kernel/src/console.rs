@@ -146,23 +146,24 @@ pub fn framebuffer_active() -> bool {
 }
 
 pub fn write_byte(byte: u8) {
-    // The framebuffer is independent of the UART: on the laptop the firmware
-    // describes a Qualcomm UART that this milestone cannot drive, so the screen
-    // may be the only visible console.
+    // Mirror output to the framebuffer, PL011 and (when validated) GENI UART.
     crate::fb::write_byte(byte);
 
     let base = UART_BASE.load(Ordering::Relaxed);
     if base != 0 {
         // SAFETY: `base` was validated by `init` and points at a PL011.
         unsafe {
-            let mut spins = 0u32;
-            while mmio_read(base, UART_FR) & FR_TXFF != 0 {
-                if spins >= 1_000_000 {
-                    return;
+            let mut ready = false;
+            for _ in 0..1_000_000 {
+                if mmio_read(base, UART_FR) & FR_TXFF == 0 {
+                    ready = true;
+                    break;
                 }
-                spins += 1;
+                core::hint::spin_loop();
             }
-            mmio_write(base, UART_DR, byte as u32);
+            if ready {
+                mmio_write(base, UART_DR, byte as u32);
+            }
         }
     }
 
