@@ -75,16 +75,6 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
         console::init(info.uart_base);
     }
 
-    // The loader identifies SPCR interface 0x13 as a Qualcomm GENI UART.
-    // Initialize only its read-only protocol/mode checks; the console driver
-    // leaves firmware clock, pinmux and baud configuration untouched.
-    if info.has_flag(FLAG_UART) && info.uart_kind == uart_kind::SDM845_GENI {
-        match console::init_geni(info.uart_base) {
-            Ok(()) => println!("GENI UART: firmware protocol verified; polling console active"),
-            Err(reason) => println!("GENI UART unavailable: {}", reason),
-        }
-    }
-
     // The loader already mapped the GOP buffer in the bootstrap physical map.
     // Initialize it before ACPI discovery and before replacing the page tables,
     // so failures in either stage remain visible on hardware without PL011.
@@ -97,6 +87,16 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
                 // The loader's handoff marker remains as the last-resort clue.
                 println!("Early framebuffer console unavailable: {}", reason);
             }
+        }
+    }
+
+    // The loader identifies SPCR interface 0x13 as a Qualcomm GENI UART.
+    // Initialize only its read-only protocol/mode checks; the console driver
+    // leaves firmware clock, pinmux and baud configuration untouched.
+    if info.has_flag(FLAG_UART) && info.uart_kind == uart_kind::SDM845_GENI {
+        match console::init_geni(info.uart_base) {
+            Ok(()) => println!("GENI UART: firmware protocol verified; polling console active"),
+            Err(reason) => println!("GENI UART unavailable: {}", reason),
         }
     }
 
