@@ -176,7 +176,8 @@ impl Fat32 {
                     if entry[0] == 0xe5 || entry[0x0b] == 0x0f || entry[0x0b] & 0x08 != 0 {
                         continue;
                     }
-                    let name = short_name(entry);
+                    let (name, name_len) = short_name(entry);
+                    let name = core::str::from_utf8(&name[..name_len]).unwrap_or("?");
                     let size = u32::from_le_bytes([entry[0x1c], entry[0x1d], entry[0x1e], entry[0x1f]]);
                     let is_dir = entry[0x0b] & 0x10 != 0;
                     crate::println!(
@@ -266,24 +267,24 @@ impl Fat32 {
     }
 }
 
-fn short_name(entry: &[u8]) -> heapless::String<13> {
-    let mut output = heapless::String::new();
+fn short_name(entry: &[u8]) -> ([u8; 13], usize) {
+    let mut output = [0u8; 13];
+    let mut length = 0usize;
     for &byte in &entry[..8] {
         if byte == b' ' { break; }
-        let _ = output.push(byte as char);
+        output[length] = byte;
+        length += 1;
     }
-    let mut has_extension = false;
-    for &byte in &entry[8..11] {
-        if byte != b' ' { has_extension = true; break; }
-    }
-    if has_extension {
-        let _ = output.push('.');
+    if entry[8..11].iter().any(|&byte| byte != b' ') {
+        output[length] = b'.';
+        length += 1;
         for &byte in &entry[8..11] {
             if byte == b' ' { break; }
-            let _ = output.push(byte as char);
+            output[length] = byte;
+            length += 1;
         }
     }
-    output
+    (output, length)
 }
 
 fn encode_short_name(name: &str) -> Result<[u8; 11], &'static str> {
