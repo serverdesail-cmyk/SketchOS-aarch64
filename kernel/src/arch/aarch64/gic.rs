@@ -127,8 +127,8 @@ pub fn init_cpu(platform: &Platform, core_mpidr: u64) -> Result<u64, &'static st
 
     let (timer_irq, timer_kind) = timer_source_from_platform(platform)
         .ok_or("GTDT does not describe a usable non-secure EL1 timer")?;
-    if timer_irq >= 32 {
-        return Err("GTDT timer interrupt is not a private interrupt");
+    if !(16..32).contains(&timer_irq) {
+        return Err("GTDT timer GSIV is not a GIC private peripheral interrupt");
     }
 
     // SAFETY: every MMIO address comes from MADT and is mapped Device-nGnRnE
