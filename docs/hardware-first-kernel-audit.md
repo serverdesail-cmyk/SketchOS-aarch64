@@ -23,7 +23,7 @@ The first job is to make the kernel entry and early diagnostics deterministic. O
 - `kernel/src/main.rs::kmain` validates BootInfo before initializing any console. On validation failure it immediately calls `arch::halt()`.
 - The only UART path initialized by `kmain` is PL011.
 - The framebuffer console is initialized only after ACPI discovery and the kernel MMU setup.
-- The existing laptop firmware inventory records SPCR interface type `0x13` at `0x894000`; the current code explicitly reports non-PL011 UARTs as unsupported and does not guess their register layout.
+- The laptop firmware inventory records SPCR interface type `0x13` at `0x894000`. ACPI defines `0x13` as the SDM845 UART interface with a 7.372 MHz clock; Qualcomm's GENI Serial Engine UART is the matching hardware family. The current loader collapses this to `uart_kind::OTHER`, and SketchOS has no GENI console driver. The exact clock/power/firmware state on this X1P platform still needs confirmation.
 - The early white/green framebuffer markers in `boot.S` are useful, but they depend on the GOP framebuffer description and its mapping being valid.
 
 **Impact**
@@ -33,7 +33,20 @@ A fault during BootInfo validation, ACPI discovery, MMU replacement, or before f
 1. Add a minimal, bounds-checked early GOP framebuffer writer that is usable before ACPI and before the final MMU map.
 2. Preserve the last boot stage and exception syndrome in a reserved BootInfo/diagnostic page.
 3. Add a panic/exception path that writes a compact status code to the framebuffer without depending on heap, scheduler, ACPI AML or interrupts.
-4. Keep UART support data-driven from SPCR/DBG2 and implement the correct Qualcomm UART only after its exact interface and register layout are confirmed. Never treat an unknown interface as PL011.
+4. Preserve the raw SPCR interface type, GAS access width, GSIV, clock frequency and namespace string in the handoff/platform data. Implement a bounded, polled Qualcomm GENI UART early console for interface `0x13`, using the SPCR base and baud settings. First verify the GENI firmware/protocol status and that firmware left the QUP clocks and power domain active; do not reset or reconfigure a live engine blindly. Never treat this interface as PL011.
+
+
+
+### P0 opportunity — The laptop's early debug UART has a documented hardware family
+
+The SPCR interface code is useful evidence, not an opaque vendor value:
+- ACPI interface type `0x13` means **SDM845 UART, 7.372 MHz clock**.
+- U-Boot's Qualcomm debugging documentation identifies SDM845-and-newer debug UARTs as **GENI Serial Engine UARTs**, with a 7.3728 MHz reference clock and a polled early-debug implementation.
+- U-Boot's GENI UART driver provides the register offsets and TX sequence; Linux's `qcom_geni_serial` driver provides the production driver reference.
+- The laptop SPCR base `0x894000` matches a QUP GENI UART instance in the upstream SDM845 platform description. This is strong evidence for the IP family, but not proof that every X1P clock, reset, firmware or power-domain detail matches SDM845.
+
+**Immediate implementation target**
+Build a tiny *output-only* early console first. It should validate the SPCR GAS space/access width and the GENI protocol status, use bounded polling with a timeout, and never enable DMA or interrupts. Keep the full QUP clock/power-domain management for the later platform driver. If the firmware has not left the serial engine initialized, fail closed and retain framebuffer diagnostics rather than writing guessed register sequences.
 
 ### P1 — Timer PPI selection can disagree with the timer actually programmed
 
@@ -138,6 +151,10 @@ Keep enumeration read-only until host-bridge windows, BAR allocation, bridge set
 3. ACPI Specification 6.6: <https://uefi.org/specs/ACPI/6.6/>
 4. Arm architecture system-register descriptions for CNTHCTL_EL2 and timer access: <https://documentation-service.arm.com/static/6023d5362cb3723f202089b8>
 5. Qualcomm, upstreaming Linux kernel support for Snapdragon X Elite (component-level platform enablement context): <https://www.qualcomm.com/developer/blog/2024/05/upstreaming-linux-kernel-support-for-the-snapdragon-x-elite>
+6. Microsoft SPCR/DBG2 interface type table (defines `0x13` as SDM845 7.372 MHz): <https://learn.microsoft.com/en-us/windows-hardware/drivers/bringup/acpi-debug-port-table>
+7. U-Boot Qualcomm early UART debugging (GENI SE, 7.3728 MHz reference): <https://docs.u-boot.org/en/latest/board/qualcomm/debugging.html>
+8. U-Boot GENI UART implementation: <https://github.com/u-boot/u-boot/blob/master/drivers/serial/serial_msm_geni.c>
+9. Linux Qualcomm GENI UART driver: <https://github.com/torvalds/linux/blob/master/drivers/tty/serial/qcom_geni_serial.c>
 
 ## Build plan — hardware is the acceptance platform
 
