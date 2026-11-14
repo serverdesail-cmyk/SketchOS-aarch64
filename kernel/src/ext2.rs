@@ -78,7 +78,7 @@ pub fn format_qemu_test_disk(
     for i in 0..512 { sec[i] = sb[i]; }
     storage::write_sector(sb_sector, &sec).map_err(|_| "write sb0")?;
     for i in 0..512 { sec[i] = sb[512 + i]; }
-    dev.write(sb_sector + 1, &sec).map_err(|_| "write sb1")?;
+    storage::write_sector(sb_sector + 1, &sec).map_err(|_| "write sb1")?;
 
     // Block group descriptor at block 2 (GDT) = sectors start_lba + 2*2 = start_lba+4
     let mut gdt = [0u8; BLOCK_SIZE as usize];
@@ -98,7 +98,7 @@ pub fn format_qemu_test_disk(
     let gdt_lba = start_lba + gdt_block as u64 * (BLOCK_SIZE as u64 / 512);
     for i in 0..2 {
         for j in 0..512 { sec[j] = gdt[i * 512 + j]; }
-        dev.write(gdt_lba + i as u64, &sec).map_err(|_| "write gdt")?;
+        storage::write_sector(gdt_lba + i as u64, &sec).map_err(|_| "write gdt")?;
     }
 
     // Block bitmap: mark blocks 0..root_dir_block+1 as used
@@ -109,7 +109,7 @@ pub fn format_qemu_test_disk(
     let bbm_lba = start_lba + bbm_block as u64 * (BLOCK_SIZE as u64 / 512);
     for i in 0..2 {
         for j in 0..512 { sec[j] = bbm[i * 512 + j]; }
-        dev.write(bbm_lba + i as u64, &sec).map_err(|_| "write bbm")?;
+        storage::write_sector(bbm_lba + i as u64, &sec).map_err(|_| "write bbm")?;
     }
 
     // Inode bitmap: mark inodes 1..11 as used (reserved) + root (2)
@@ -119,7 +119,7 @@ pub fn format_qemu_test_disk(
     let ibm_lba = start_lba + ibm_block as u64 * (BLOCK_SIZE as u64 / 512);
     for i in 0..2 {
         for j in 0..512 { sec[j] = ibm[i * 512 + j]; }
-        dev.write(ibm_lba + i as u64, &sec).map_err(|_| "write ibm")?;
+        storage::write_sector(ibm_lba + i as u64, &sec).map_err(|_| "write ibm")?;
     }
 
     // Inode table: write root inode (inode 2) at inode_table_start block, offset 128 (inode 2 = index 1)
@@ -152,7 +152,7 @@ pub fn format_qemu_test_disk(
     let it_lba = start_lba + inode_table_start as u64 * (BLOCK_SIZE as u64 / 512);
     for i in 0..(inode_table_blocks * 2) {
         for j in 0..512 { sec[j] = inode_table[i as usize * 512 + j]; }
-        dev.write(it_lba + i as u64, &sec).map_err(|_| "write inode table")?;
+        storage::write_sector(it_lba + i as u64, &sec).map_err(|_| "write inode table")?;
     }
 
     // Root directory data block
@@ -174,7 +174,7 @@ pub fn format_qemu_test_disk(
     let rd_lba = start_lba + root_dir_block as u64 * (BLOCK_SIZE as u64 / 512);
     for i in 0..2 {
         for j in 0..512 { sec[j] = rootdir[i * 512 + j]; }
-        dev.write(rd_lba + i as u64, &sec).map_err(|_| "write rootdir")?;
+        storage::write_sector(rd_lba + i as u64, &sec).map_err(|_| "write rootdir")?;
     }
 
     crate::println!("ext2: formatted {} blocks, {} inodes, {} groups", total_blocks, inodes_count, num_groups);
