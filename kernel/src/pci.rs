@@ -113,6 +113,22 @@ fn enumerate_window(window: &Mcfg, totals: &mut Totals) {
         return;
     }
 
+    // Test the ECAM aperture once before scanning the bus. A valid MCFG
+    // descriptor does not guarantee that a platform power domain is awake;
+    // if the first config read aborts, skip this window rather than generating
+    // hundreds of repeated external aborts.
+    let probe_address = match config_address(window, window.start_bus, 0, 0, 0) {
+        Some(address) => sketchos_bootinfo::phys_to_virt(address) as u64,
+        None => return,
+    };
+    if crate::arch::aarch64::probe_read16(probe_address).is_err() {
+        println!(
+            "  segment {} ECAM at 0x{:016x}: inaccessible; skipping config scan",
+            window.segment, window.base
+        );
+        return;
+    }
+
     let mut visited = [false; 256];
     let mut queue = [0u8; MAX_BUSES];
     let mut head = 0usize;
