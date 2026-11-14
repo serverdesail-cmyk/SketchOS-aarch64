@@ -22,11 +22,11 @@ pub fn register(dev: VirtioMmioBlock) {
 }
 
 pub fn capacity_sectors() -> Option<u64> {
-    DEVICE.lock().as_ref().map(BlockDevice::capacity_sectors)
+    DEVICE.lock().as_ref().map(|device| device.capacity_sectors())
 }
 
 pub fn device_name() -> Option<&'static str> {
-    DEVICE.lock().as_ref().map(BlockDevice::name)
+    DEVICE.lock().as_ref().map(|device| device.name())
 }
 
 pub fn report() {
