@@ -180,6 +180,102 @@ pub fn probe_read(address: u64) -> Result<u64, ()> {
     }
 }
 
+/// Read an 8-bit MMIO/configuration value without taking a fatal abort.
+pub fn probe_read8(address: u64) -> Result<u8, ()> {
+    let value: u32;
+    let status: u64;
+    // SAFETY: the exception handler redirects a synchronous abort to label 2.
+    unsafe {
+        asm!(
+            "adr x9, 2f",
+            "str x9, [{resume}]",
+            "mov w10, #1",
+            "strb w10, [{active}]",
+            "1:",
+            "ldrb {value:w}, [{address}]",
+            "mov {status}, #1",
+            "b 3f",
+            "2:",
+            "mov {status}, #0",
+            "3:",
+            "strb wzr, [{active}]",
+            resume = in(reg) core::ptr::addr_of!(PROBE_RESUME),
+            active = in(reg) core::ptr::addr_of!(PROBE_ACTIVE),
+            address = in(reg) address,
+            value = out(reg) value,
+            status = out(reg) status,
+            out("x9") _,
+            out("x10") _,
+            options(nostack),
+        );
+    }
+    if status != 0 { Ok(value as u8) } else { Err(()) }
+}
+
+/// Read a 16-bit MMIO/configuration value without taking a fatal abort.
+pub fn probe_read16(address: u64) -> Result<u16, ()> {
+    let value: u32;
+    let status: u64;
+    // SAFETY: the exception handler redirects a synchronous abort to label 2.
+    unsafe {
+        asm!(
+            "adr x9, 2f",
+            "str x9, [{resume}]",
+            "mov w10, #1",
+            "strb w10, [{active}]",
+            "1:",
+            "ldrh {value:w}, [{address}]",
+            "mov {status}, #1",
+            "b 3f",
+            "2:",
+            "mov {status}, #0",
+            "3:",
+            "strb wzr, [{active}]",
+            resume = in(reg) core::ptr::addr_of!(PROBE_RESUME),
+            active = in(reg) core::ptr::addr_of!(PROBE_ACTIVE),
+            address = in(reg) address,
+            value = out(reg) value,
+            status = out(reg) status,
+            out("x9") _,
+            out("x10") _,
+            options(nostack),
+        );
+    }
+    if status != 0 { Ok(value as u16) } else { Err(()) }
+}
+
+/// Read a 32-bit MMIO/configuration value without taking a fatal abort.
+pub fn probe_read32(address: u64) -> Result<u32, ()> {
+    let value: u32;
+    let status: u64;
+    // SAFETY: the exception handler redirects a synchronous abort to label 2.
+    unsafe {
+        asm!(
+            "adr x9, 2f",
+            "str x9, [{resume}]",
+            "mov w10, #1",
+            "strb w10, [{active}]",
+            "1:",
+            "ldr {value:w}, [{address}]",
+            "mov {status}, #1",
+            "b 3f",
+            "2:",
+            "mov {status}, #0",
+            "3:",
+            "strb wzr, [{active}]",
+            resume = in(reg) core::ptr::addr_of!(PROBE_RESUME),
+            active = in(reg) core::ptr::addr_of!(PROBE_ACTIVE),
+            address = in(reg) address,
+            value = out(reg) value,
+            status = out(reg) status,
+            out("x9") _,
+            out("x10") _,
+            options(nostack),
+        );
+    }
+    if status != 0 { Ok(value) } else { Err(()) }
+}
+
 /// Write a `u64` to a possibly unwritable address without taking a fatal fault.
 #[allow(dead_code)] // Kept for bring-up probing; the 0.0.5 loader may use it.
 pub fn probe_write(address: u64, value: u64) -> Result<(), ()> {
