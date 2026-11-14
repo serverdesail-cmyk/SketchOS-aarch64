@@ -59,6 +59,7 @@ fn main() -> Status {
     uefi::println!("SketchOS UEFI loader 0.0.6 (AArch64)");
     uefi::println!("Firmware vendor: {}", system::firmware_vendor());
     uefi::println!("Firmware revision: 0x{:08x}", system::firmware_revision());
+    platform::report_boot_cpu_state();
 
     let (loader_start, loader_end) = platform::loader_range().unwrap_or((0, 0));
     if loader_start != 0 {
