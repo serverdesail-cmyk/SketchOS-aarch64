@@ -53,7 +53,7 @@ jobs:
           readelf -h target/aarch64-unknown-none/release/sketchos-kernel | grep -q 'Class:.*ELF64'
           readelf -h target/aarch64-unknown-none/release/sketchos-kernel | grep -q 'Machine:.*AArch64'
           readelf -h target/aarch64-unknown-none/release/sketchos-kernel | grep -q 'Type:.*DYN'
-          readelf -h target/aarch64-unknown-uefi/release/sketchos-uefi.efi | grep -q 'Machine:.*AArch64'
+          file target/aarch64-unknown-uefi/release/sketchos-uefi.efi | grep -qi 'PE32+.*AArch64'
 
       - name: Upload hardware-test ISO
         uses: actions/upload-artifact@v4
