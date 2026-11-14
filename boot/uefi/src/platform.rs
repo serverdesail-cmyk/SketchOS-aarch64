@@ -104,3 +104,76 @@ pub fn framebuffer_info() -> Option<FramebufferInfo> {
         size,
     })
 }
+
+/// Print the processor state inherited from UEFI before the kernel handoff.
+///
+/// This is read-only and intentionally runs while UEFI's console is still
+/// available. It records the actual entry EL and the EL-specific controls that
+/// determine whether the kernel's EL2-to-EL1 transition is valid.
+pub fn report_boot_cpu_state() {
+    let current_el: u64;
+    let pfr0: u64;
+    let mmfr0: u64;
+    let isar0: u64;
+    let cntfrq: u64;
+    unsafe {
+        core::arch::asm!("mrs {v}, CurrentEL", v = out(reg) current_el, options(nomem, nostack, preserves_flags));
+        core::arch::asm!("mrs {v}, ID_AA64PFR0_EL1", v = out(reg) pfr0, options(nomem, nostack, preserves_flags));
+        core::arch::asm!("mrs {v}, ID_AA64MMFR0_EL1", v = out(reg) mmfr0, options(nomem, nostack, preserves_flags));
+        core::arch::asm!("mrs {v}, ID_AA64ISAR0_EL1", v = out(reg) isar0, options(nomem, nostack, preserves_flags));
+        core::arch::asm!("mrs {v}, CNTFRQ_EL0", v = out(reg) cntfrq, options(nomem, nostack, preserves_flags));
+    }
+    let entry_el = (current_el >> 2) & 0x3;
+    uefi::println!(
+        "UEFI CPU: entry EL{}, CNTFRQ {} Hz, PFR0 0x{:016x}, MMFR0 0x{:016x}, ISAR0 0x{:016x}",
+        entry_el,
+        cntfrq,
+        pfr0,
+        mmfr0,
+        isar0
+    );
+
+    if entry_el == 2 {
+        let sctlr: u64;
+        let hcr: u64;
+        let cptr: u64;
+        let cnthctl: u64;
+        let icc_sre: u64;
+        unsafe {
+            core::arch::asm!("mrs {v}, SCTLR_EL2", v = out(reg) sctlr, options(nomem, nostack, preserves_flags));
+            core::arch::asm!("mrs {v}, HCR_EL2", v = out(reg) hcr, options(nomem, nostack, preserves_flags));
+            core::arch::asm!("mrs {v}, CPTR_EL2", v = out(reg) cptr, options(nomem, nostack, preserves_flags));
+            core::arch::asm!("mrs {v}, CNTHCTL_EL2", v = out(reg) cnthctl, options(nomem, nostack, preserves_flags));
+            core::arch::asm!("mrs {v}, ICC_SRE_EL2", v = out(reg) icc_sre, options(nomem, nostack, preserves_flags));
+        }
+        uefi::println!(
+            "EL2 state: SCTLR 0x{:016x} HCR 0x{:016x} CPTR 0x{:016x} CNTHCTL 0x{:016x} ICC_SRE 0x{:016x}",
+            sctlr,
+            hcr,
+            cptr,
+            cnthctl,
+            icc_sre
+        );
+    } else if entry_el == 1 {
+        let sctlr: u64;
+        let cpacr: u64;
+        let vbar: u64;
+        let icc_sre: u64;
+        unsafe {
+            core::arch::asm!("mrs {v}, SCTLR_EL1", v = out(reg) sctlr, options(nomem, nostack, preserves_flags));
+            core::arch::asm!("mrs {v}, CPACR_EL1", v = out(reg) cpacr, options(nomem, nostack, preserves_flags));
+            core::arch::asm!("mrs {v}, VBAR_EL1", v = out(reg) vbar, options(nomem, nostack, preserves_flags));
+            core::arch::asm!("mrs {v}, ICC_SRE_EL1", v = out(reg) icc_sre, options(nomem, nostack, preserves_flags));
+        }
+        uefi::println!(
+            "EL1 state: SCTLR 0x{:016x} CPACR 0x{:016x} VBAR 0x{:016x} ICC_SRE 0x{:016x}",
+            sctlr,
+            cpacr,
+            vbar,
+            icc_sre
+        );
+        uefi::println!("EL2 controls, if implemented, are firmware-owned at EL1 entry");
+    } else {
+        uefi::println!("UEFI entered at an unsupported exception level for this kernel");
+    }
+}
