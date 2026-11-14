@@ -166,25 +166,48 @@ unsafe fn walk_sdt(
 
 unsafe fn parse_spcr(table: *const u8) -> Option<Spcr> {
     let length = read_u32(table, 4) as usize;
-    if length < 80 || read_bytes(table, 0) != *b"SPCR" {
+    if !(80..=4096).contains(&length)
+        || read_bytes(table, 0) != *b"SPCR"
+        || checksum(table, length) != 0
+    {
         return None;
     }
 
     let interface = read_u8(table, 36);
-    // Generic address structure starts at offset 40; its 64-bit address is at
-    // offset 44 (space id, bit width, bit offset, access width precede it).
-    let base = read_u64(table, 44);
+    // Generic Address Structure: space ID, bit width, bit offset, access size,
+    // then the 64-bit register base.
+    let gas_space = read_u8(table, 40);
+    let gas_width = read_u8(table, 41);
+    let gas_offset = read_u8(table, 42);
+    let gas_access_size = read_u8(table, 43);
+    let raw_base = read_u64(table, 44);
 
-    let kind = match interface {
-        0x00..=0x02 => uart_kind::UART16550,
-        0x03 => uart_kind::PL011,
-        0x0e => uart_kind::SBSA,
-        0x13 => uart_kind::SDM845_GENI,
-        _ => uart_kind::OTHER,
+    // GENI and PL011 are 32-bit SystemMemory register blocks. Firmware may
+    // leave width/access-size zero to mean the interface-defined default.
+    let gas_valid = gas_space == 0
+        && gas_offset == 0
+        && (gas_width == 0 || gas_width == 32)
+        && (gas_access_size == 0 || gas_access_size == 3);
+    let base_valid = raw_base != 0
+        && raw_base & 0x3 == 0
+        && raw_base
+            .checked_add(4096)
+            .is_some_and(|end| end <= (1u64 << 39));
+
+    let kind = if gas_valid && base_valid {
+        match interface {
+            0x00..=0x02 => uart_kind::UART16550,
+            0x03 => uart_kind::PL011,
+            0x0e => uart_kind::SBSA,
+            0x13 => uart_kind::SDM845_GENI,
+            _ => uart_kind::OTHER,
+        }
+    } else {
+        uart_kind::OTHER
     };
 
     Some(Spcr {
-        base,
+        base: if gas_valid && base_valid { raw_base } else { 0 },
         interface,
         kind,
     })
