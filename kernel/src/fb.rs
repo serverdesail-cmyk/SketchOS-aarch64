@@ -220,12 +220,19 @@ fn clear() {
         if offset.saturating_add(row_bytes) > size {
             break;
         }
-        // SAFETY: the range was validated against the firmware-reported size,
-        // and the framebuffer is mapped Normal non-cacheable in the physmap.
+        // SAFETY: every 32-bit pixel lies inside the firmware-reported size.
+        // Volatile stores prevent the compiler from eliding writes to the
+        // memory-mapped scanout buffer.
         unsafe {
-            ptr::write_bytes((base + offset) as *mut u8, 0, row_bytes as usize);
+            let pixels = row_bytes / 4;
+            for column in 0..pixels {
+                ptr::write_volatile((base + offset + column * 4) as *mut u32, 0);
+            }
         }
     }
+    // Ensure the display engine can observe the cleared scanout buffer before
+    // the kernel starts printing into it.
+    unsafe { core::arch::asm!("dsb oshst", options(nostack, preserves_flags)) };
 }
 
 fn scroll() {
@@ -245,20 +252,24 @@ fn scroll() {
         return;
     }
 
-    // Move every text row up by one. `ptr::copy` handles the overlap.
-    // SAFETY: both source and destination stay inside the validated range.
+    // Move every text row up by one using volatile 32-bit accesses. The
+    // destination precedes the source, so a forward copy is overlap-safe.
+    // SAFETY: total was checked against SIZE above.
     unsafe {
-        ptr::copy(
-            (base + row_bytes) as *const u8,
-            base as *mut u8,
-            row_bytes.saturating_mul(rows.saturating_sub(1) as u64) as usize,
-        );
-        ptr::write_bytes(
-            (base + row_bytes * rows.saturating_sub(1) as u64) as *mut u8,
-            0,
-            row_bytes as usize,
-        );
+        let pixels = row_bytes.saturating_mul(rows.saturating_sub(1) as u64) / 4;
+        let source = (base + row_bytes) as *const u32;
+        let destination = base as *mut u32;
+        for index in 0..pixels as usize {
+            let value = ptr::read_volatile(source.add(index));
+            ptr::write_volatile(destination.add(index), value);
+        }
+
+        let last_row = (base + row_bytes * rows.saturating_sub(1) as u64) as *mut u32;
+        for index in 0..(row_bytes / 4) as usize {
+            ptr::write_volatile(last_row.add(index), 0);
+        }
     }
+    unsafe { core::arch::asm!("dsb oshst", options(nostack, preserves_flags)) };
 }
 
 fn fill_rect(x: u32, y: u32, width: u32, height: u32, color: u32) {
