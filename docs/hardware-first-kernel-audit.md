@@ -207,7 +207,7 @@ The direct-EL1 path is not self-contained on a platform where EL2 exists and fir
 **Required change**
 Specify these as explicit loader/firmware preconditions for direct EL1 entry and verify them where architecturally readable. If they cannot be guaranteed, use the EL2 entry path and perform the setup there. Do not claim the direct-EL1 path is portable until this contract is met.
 
-### P1 — The installed EL2 vector table uses an EL1-only return path
+### P1 — [FIXED IN THIS BRANCH] The installed EL2 vector table used an EL1-only return path
 
 **Evidence in source**
 - `boot.S` installs `exception_vectors` into both `VBAR_EL1` and `VBAR_EL2` before the EL2-to-EL1 transition.
@@ -217,8 +217,7 @@ Specify these as explicit loader/firmware preconditions for direct EL1 entry and
 **Impact**
 A synchronous exception while still executing at EL2 can enter this table, but the common return path restores the wrong exception-level bank. This can turn an early diagnostic exception into a second fault or an uncontrolled return.
 
-**Required change**
-Use a dedicated minimal EL2 early-fault vector that records `ESR_EL2`, `ELR_EL2`, `FAR_EL2` and parks, or implement a fully EL-aware save/restore path. Keep the general scheduler/context-switch vectors EL1-only and install them only after the kernel is running at EL1.
+**Status on this branch: fixed.** `VBAR_EL2` now points to a dedicated 2 KiB-aligned early-fault vector table. It records `ESR_EL2`, `ELR_EL2`, `SPSR_EL2`, `FAR_EL2`, `HPFAR_EL2` and `SCTLR_EL2` into a reserved BSS record, then parks without using the EL1 stack or EL1 return registers. The general scheduler/context-switch vectors remain EL1-only. The fault path has compiled, but has not been exercised on hardware.
 
 
 ## Changes already made on the hardware-first branch
@@ -230,5 +229,10 @@ These are source changes, not hardware-support claims:
 - SPCR interface `0x13` is preserved as `SDM845_GENI`; a bounded, polling-only GENI TX path verifies UART protocol and refuses DMA mode. It does not load firmware, change clocks, change baud, or manage QUP power.
 - GIC timer selection now carries the selected source with its GSIV. CNTV and CNTP registers are used only with their corresponding GTDT interrupt field.
 - Added a separate `hardware-kernel-build.yml` workflow that builds the AArch64 kernel/UEFI ISO, runs host-side allocator/scheduler tests, checks changed Rust formatting and uploads an ISO **without running an emulator**.
+
+- The UEFI loader now prints the inherited entry EL, `CNTFRQ_EL0`, ID register values and EL-specific SCTLR/HCR/CPTR/CNTHCTL state before handoff; it avoids probing GIC system registers that firmware may have gated.
+- The UEFI SPCR parser now checks the table checksum and validates the SystemMemory GAS geometry before exposing a 32-bit PL011/GENI base.
+- The framebuffer is not marked active until its first bounded volatile clear completes, preventing an early framebuffer fault from recursively printing through the same invalid mapping.
+- EL2 early faults now use a dedicated fatal vector path rather than the EL1 context-switch exception table.
 
 None of these changes has been tested on the HP laptop yet. The next static pass is to validate SPCR GAS details, review the GENI sequencer protocol against the Qualcomm/Linux sources, and audit every EL1/EL2 entry register against the UEFI and Arm contracts.
