@@ -287,3 +287,10 @@ The previous implementation exposed references into `static mut` globals for the
 - Partition metadata is built locally and published under a lock instead of mutating global arrays without synchronization.
 - FAT32 mount now returns an owned, read-only volume object; the old global mutable filesystem reference and unimplemented write path are removed.
 - The experimental ext2 formatter is explicitly named as a QEMU test-disk formatter and refuses physical-hardware use.
+
+
+### P1 — The timer silently defaulted to PPI 27 when GTDT was missing
+
+The GIC code previously fell back to the architectural virtual timer PPI 27 whenever no GTDT timer entry was parsed. That is a QEMU-friendly default, not a valid hardware discovery policy for the Snapdragon laptop. A missing or malformed GTDT could therefore select an interrupt that firmware never assigned to the timer.
+
+**Status on this branch: fixed.** The fallback to PPI 27 is now allowed only when the UEFI loader explicitly marks the machine as QEMU virt. Physical hardware must provide a valid GTDT timer entry. The selected EL1 timer's GTDT flags must describe the supported level-sensitive, active-high configuration, and its GSIV must be in the GIC PPI range 16–31.
