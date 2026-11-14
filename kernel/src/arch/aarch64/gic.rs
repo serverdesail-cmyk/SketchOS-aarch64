@@ -125,7 +125,8 @@ pub fn init_cpu(platform: &Platform, core_mpidr: u64) -> Result<u64, &'static st
         return Err("GICv3 CPU interface requires EL1");
     }
 
-    let (timer_irq, timer_kind) = timer_source_from_platform(platform);
+    let (timer_irq, timer_kind) = timer_source_from_platform(platform)
+        .ok_or("GTDT does not describe a usable non-secure EL1 timer")?;
     if timer_irq >= 32 {
         return Err("GTDT timer interrupt is not a private interrupt");
     }
@@ -261,19 +262,20 @@ pub fn report() {
     );
 }
 
-fn timer_source_from_platform(platform: &Platform) -> (u32, TimerKind) {
+fn timer_source_from_platform(platform: &Platform) -> Option<(u32, TimerKind)> {
     match platform.timer {
         Some(timer)
             if timer.virtual_el1_gsiv != 0 && timer.virtual_el1_gsiv != u32::MAX =>
         {
-            (timer.virtual_el1_gsiv, TimerKind::Virtual)
+            Some((timer.virtual_el1_gsiv, TimerKind::Virtual))
         }
         Some(timer)
             if timer.non_secure_el1_gsiv != 0 && timer.non_secure_el1_gsiv != u32::MAX =>
         {
-            (timer.non_secure_el1_gsiv, TimerKind::Physical)
+            Some((timer.non_secure_el1_gsiv, TimerKind::Physical))
         }
-        _ => (TIMER_PPI_DEFAULT, TimerKind::Virtual),
+        Some(_) => None,
+        None => Some((TIMER_PPI_DEFAULT, TimerKind::Virtual)),
     }
 }
 
