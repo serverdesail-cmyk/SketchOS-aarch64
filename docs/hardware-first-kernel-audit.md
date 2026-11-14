@@ -236,3 +236,32 @@ These are source changes, not hardware-support claims:
 - EL2 early faults now use a dedicated fatal vector path rather than the EL1 context-switch exception table.
 
 None of these changes has been tested on the HP laptop yet. The next static pass is to validate SPCR GAS details, review the GENI sequencer protocol against the Qualcomm/Linux sources, and audit every EL1/EL2 entry register against the UEFI and Arm contracts.
+
+
+### P0 — QEMU VirtIO-MMIO probing was unconditional on physical hardware
+
+**Evidence in source**
+- `main.rs` called `storage::probe()` and `net::probe()` unconditionally after heap initialization.
+- Both drivers scanned the QEMU virtio-mmio aperture beginning at physical `0x0a000000` in 0x200-byte steps.
+- The storage probe did more than read: it wrote the VirtIO status, configured a queue PFN and set DRIVER_OK, allowing device DMA.
+- This address range is a QEMU `virt` machine convention, not a generic AArch64 bus. The Snapdragon laptop must use firmware-described ACPI/PCI resources instead.
+
+**Impact**
+On the laptop, those reads can hit an unpowered or unmapped MMIO region and cause an external abort. If a coincidental device signature were read, the storage probe could configure DMA without an SMMU mapping. This is a concrete hardware-safety defect and a plausible cause of a post-handoff failure, although it is not yet proven to be the exact failure point.
+
+**Status on this branch: fixed.**
+- The functions are now explicitly named `probe_qemu_virtio_mmio`.
+- `main.rs` calls them only when `FLAG_QEMU_VIRT` is set.
+- On physical hardware, both probes are skipped and reported as unavailable until ACPI/PCI device discovery and real drivers exist.
+
+### P1 — PCI ECAM inventory could fault on malformed or powered-down windows
+
+**Evidence in source**
+- MCFG parsing previously accepted any nonzero base and bus range without checking the 1 MiB ECAM alignment or whether the complete bus window fit inside the kernel's 512 GiB physical map.
+- PCI inventory used raw volatile loads. A valid MCFG descriptor does not guarantee that a particular root complex is powered at the moment of probing.
+
+**Status on this branch: hardened.**
+- MCFG entries now require a 1 MiB-aligned base and a checked full-window end within the supported physical map.
+- ECAM reads use the kernel's single-core, fault-contained 8/16/32-bit probe helpers.
+- A window whose first configuration read aborts is skipped rather than repeatedly faulted.
+- These probes are still inventory-only and read-only; PCI bus mastering remains disabled until SMMU/DMA support exists.
