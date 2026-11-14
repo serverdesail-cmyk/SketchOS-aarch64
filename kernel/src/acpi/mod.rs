@@ -272,6 +272,8 @@ pub struct SpcrInfo {
 pub struct Platform {
     pub revision: u8,
     pub oem_id: [u8; 6],
+    /// Set from the validated UEFI BootInfo platform flag, not guessed from devices.
+    pub qemu_virt: bool,
     pub table_count: usize,
     pub tables_ok: usize,
     pub tables_bad: usize,
@@ -322,6 +324,7 @@ impl Platform {
         Self {
             revision: 0,
             oem_id: [0; 6],
+            qemu_virt: false,
             table_count: 0,
             tables_ok: 0,
             tables_bad: 0,
