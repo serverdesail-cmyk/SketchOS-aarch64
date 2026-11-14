@@ -25,6 +25,30 @@ pub fn parse(table: &Table<'_>, platform: &mut Platform) {
             offset += ENTRY_LENGTH;
             continue;
         }
+
+        // One ECAM bus occupies 1 MiB and the kernel's current linear
+        // physical map covers the first 512 GiB only. MCFG bases must be
+        // 1 MiB-aligned; reject malformed/out-of-map windows before any MMIO
+        // configuration-space read can be attempted.
+        let bus_count = (end_bus as u64) - (start_bus as u64) + 1;
+        let window_bytes = match bus_count.checked_mul(1 << 20) {
+            Some(bytes) => bytes,
+            None => {
+                offset += ENTRY_LENGTH;
+                continue;
+            }
+        };
+        let window_end = match base.checked_add(window_bytes) {
+            Some(end) => end,
+            None => {
+                offset += ENTRY_LENGTH;
+                continue;
+            }
+        };
+        if base & ((1 << 20) - 1) != 0 || window_end > (512u64 << 30) {
+            offset += ENTRY_LENGTH;
+            continue;
+        }
         platform.mcfg[platform.mcfg_count] = Mcfg {
             base,
             segment,
