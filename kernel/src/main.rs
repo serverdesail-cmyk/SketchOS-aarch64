@@ -330,8 +330,15 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
     if let Err(reason) = selftest::heap_test() {
         fatal(&info, Some(platform), reason);
     }
-        storage::probe();
-        net::probe();
+        if info.has_flag(FLAG_QEMU_VIRT) {
+            storage::probe_qemu_virtio_mmio();
+            net::probe_qemu_virtio_mmio();
+        } else {
+            // 0x0a000000 is a QEMU virtio-mmio aperture, not a generic
+            // AArch64 bus. Do not touch it on the Snapdragon laptop.
+            println!("Storage: QEMU VirtIO-MMIO probe skipped on physical hardware");
+            println!("Net: QEMU VirtIO-MMIO probe skipped on physical hardware");
+        }
         drm::init();
         drm::report();
         partition::enumerate();
