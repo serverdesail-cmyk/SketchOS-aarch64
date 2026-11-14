@@ -179,6 +179,7 @@ unsafe fn parse_spcr(table: *const u8) -> Option<Spcr> {
         0x00..=0x02 => uart_kind::UART16550,
         0x03 => uart_kind::PL011,
         0x0e => uart_kind::SBSA,
+        0x13 => uart_kind::SDM845_GENI,
         _ => uart_kind::OTHER,
     };
 
