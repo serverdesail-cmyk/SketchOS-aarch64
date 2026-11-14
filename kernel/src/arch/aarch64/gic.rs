@@ -263,19 +263,28 @@ pub fn report() {
 }
 
 fn timer_source_from_platform(platform: &Platform) -> Option<(u32, TimerKind)> {
+    // The architected EL1 timer PPI is level-sensitive and active-high.
+    // GTDT bit 0 describes edge/level and bit 1 polarity; reserved or
+    // unsupported values are rejected rather than silently misconfigured.
+    let flags_supported = |flags: u32| flags == 0;
     match platform.timer {
         Some(timer)
-            if timer.virtual_el1_gsiv != 0 && timer.virtual_el1_gsiv != u32::MAX =>
+            if timer.virtual_el1_gsiv != 0
+                && timer.virtual_el1_gsiv != u32::MAX
+                && flags_supported(timer.virtual_el1_flags) =>
         {
             Some((timer.virtual_el1_gsiv, TimerKind::Virtual))
         }
         Some(timer)
-            if timer.non_secure_el1_gsiv != 0 && timer.non_secure_el1_gsiv != u32::MAX =>
+            if timer.non_secure_el1_gsiv != 0
+                && timer.non_secure_el1_gsiv != u32::MAX
+                && flags_supported(timer.non_secure_el1_flags) =>
         {
             Some((timer.non_secure_el1_gsiv, TimerKind::Physical))
         }
         Some(_) => None,
-        None => Some((TIMER_PPI_DEFAULT, TimerKind::Virtual)),
+        None if platform.qemu_virt => Some((TIMER_PPI_DEFAULT, TimerKind::Virtual)),
+        None => None,
     }
 }
 
