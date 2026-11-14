@@ -94,3 +94,6 @@ Do not copy register bases or clock IDs from SDM845/other Snapdragon generations
 - No DMA-capable device is allowed to bus-master until the IOMMU/SMMU mapping is correct.
 - Unsupported ACPI operation regions return explicit errors; they never report fake success.
 - The hardware-first CI builds and packages the ISO without running an emulator. Physical laptop results are recorded separately from compile/test results.
+
+
+Board-specific reference: [X1P42100 HP OmniBook X14 upstream Linux cross-check](x1p42100-upstream-linux-reference.md). Use it to understand the board topology and driver sequencing, but confirm resources against the laptop's ACPI tables before touching hardware.
