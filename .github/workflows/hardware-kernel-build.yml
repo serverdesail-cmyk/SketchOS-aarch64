@@ -1,0 +1,66 @@
+name: SketchOS hardware-first build (no emulator)
+
+on:
+  push:
+    branches: [hardware/qualcomm-kernel-audit]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  hardware-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal \
+            --target aarch64-unknown-none,aarch64-unknown-uefi
+          rustup default 1.99.1
+          rustup component add rustfmt
+
+      - name: Install image build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dosfstools mtools xorriso
+
+      - name: Check formatting of changed Rust files
+        shell: bash
+        run: |
+          git fetch --no-tags origin stability/arm64-boot-audit
+          mapfile -t changed_rust < <(git diff --name-only origin/stability/arm64-boot-audit...HEAD -- '*.rs')
+          if (("${#changed_rust[@]}" == 0)); then
+            echo "No Rust source files changed"
+          else
+            rustfmt --edition 2021 --check "${changed_rust[@]}"
+          fi
+
+      - name: Run host-side memory and scheduler tests
+        run: cargo test --locked -p sketchos-mm -p sketchos-sched-core
+
+      - name: Build UEFI loader, hardware kernel, userspace and ISO
+        run: bash tools/build-iso.sh
+
+      - name: Verify AArch64 images and checksum
+        shell: bash
+        run: |
+          sha256sum -c images/SketchOS-AArch64.iso.sha256
+          readelf -h target/aarch64-unknown-none/release/sketchos-kernel | grep -q 'Class:.*ELF64'
+          readelf -h target/aarch64-unknown-none/release/sketchos-kernel | grep -q 'Machine:.*AArch64'
+          readelf -h target/aarch64-unknown-none/release/sketchos-kernel | grep -q 'Type:.*DYN'
+          file target/aarch64-unknown-uefi/release/sketchos-uefi.efi | grep -qi 'PE32+.*AArch64'
+
+      - name: Upload hardware-test ISO
+        uses: actions/upload-artifact@v4
+        with:
+          name: SketchOS-Hardware-ISO
+          path: |
+            images/SketchOS-AArch64.iso
+            images/SketchOS-AArch64.iso.sha256
+          if-no-files-found: error
+          retention-days: 30

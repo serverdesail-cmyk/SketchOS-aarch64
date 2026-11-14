@@ -3,6 +3,7 @@
 use core::sync::atomic::Ordering;
 
 use crate::println;
+use crate::sync::IrqSpinLock;
 use sketchos_bootinfo::{phys_to_virt, PHYSMAP_BASE};
 
 pub const SECTOR_SIZE: usize = 512;
@@ -14,14 +15,28 @@ pub trait BlockDevice {
     fn name(&self) -> &'static str;
 }
 
-static mut DEVICE: Option<VirtioMmioBlock> = None;
+static DEVICE: IrqSpinLock<Option<VirtioMmioBlock>> = IrqSpinLock::new(None);
 
 pub fn register(dev: VirtioMmioBlock) {
-    unsafe { DEVICE = Some(dev); }
+    *DEVICE.lock() = Some(dev);
 }
 
-pub fn device() -> Option<&'static VirtioMmioBlock> {
-    unsafe { DEVICE.as_ref() }
+pub fn capacity_sectors() -> Option<u64> {
+    DEVICE.lock().as_ref().map(|device| device.capacity_sectors())
+}
+
+pub fn device_name() -> Option<&'static str> {
+    DEVICE.lock().as_ref().map(|device| device.name())
+}
+
+pub fn report() {
+    if let Some(name) = device_name() {
+        if let Some(capacity) = capacity_sectors() {
+            println!("Storage: {} ({} sectors)", name, capacity);
+        }
+    } else {
+        println!("Storage: no block device");
+    }
 }
 
 pub mod virtio {
@@ -65,7 +80,8 @@ pub mod virtio {
         used_idx: *mut u16,
     }
 
-    unsafe impl Sync for VirtioMmioBlock {}
+    // SAFETY: the block device is moved into DEVICE and all access is serialized
+    // by the enclosing IrqSpinLock; the raw queue pointers never escape it.
     unsafe impl Send for VirtioMmioBlock {}
 
     impl VirtioMmioBlock {
@@ -278,7 +294,11 @@ pub mod virtio {
 
 pub use virtio::VirtioMmioBlock;
 
-pub fn probe() {
+/// Probe the QEMU virt machine's fixed VirtIO-MMIO slot range.
+///
+/// This address range is not a generic AArch64 device bus. Never call this on
+/// physical hardware; platform devices must be discovered from ACPI/PCI first.
+pub fn probe_qemu_virtio_mmio() {
     let mut base = 0x0a00_0000u64;
     for _ in 0..32 {
         if let Some(dev) = VirtioMmioBlock::probe(base) {
@@ -292,11 +312,13 @@ pub fn probe() {
 }
 
 pub fn read_sector(lba: u64, buf: &mut [u8]) -> Result<(), &'static str> {
-    let dev = device().ok_or("no block device")?;
+    let guard = DEVICE.lock();
+    let dev = guard.as_ref().ok_or("no block device")?;
     dev.read(lba, buf)
 }
 
 pub fn write_sector(lba: u64, buf: &[u8]) -> Result<(), &'static str> {
-    let dev = device().ok_or("no block device")?;
+    let guard = DEVICE.lock();
+    let dev = guard.as_ref().ok_or("no block device")?;
     dev.write(lba, buf)
 }

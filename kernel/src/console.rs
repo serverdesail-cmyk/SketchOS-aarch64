@@ -1,13 +1,13 @@
-//! Early PL011 console.
+//! Early polling consoles for firmware-described PL011 and Qualcomm GENI UARTs.
 //!
-//! Milestone 0.0.4 only drives an ARM PL011, and only when the firmware
-//! describes one. The QEMU `virt` PL011 runs from a 24 MHz reference clock,
-//! so that is the divisor used here. A real machine whose firmware describes
-//! a non-PL011 UART intentionally gets no kernel output yet: driving an
-//! unknown register layout would be worse than staying silent.
+//! PL011 is used only when SPCR identifies that exact interface. Qualcomm
+//! GENI support is deliberately output-only and FIFO/polling-only: it verifies
+//! that firmware loaded the UART protocol and that DMA mode is disabled, then
+//! reuses the firmware's clock/baud configuration. It does not reset the
+//! serial engine, change clocks, enable DMA, or request interrupts.
 //!
 //! The base stored here is physical; every register access goes through the
-//! linear physical map built by milestone 0.0.4.
+//! linear physical map built by the UEFI loader.
 
 use core::fmt::{self, Write};
 use core::sync::atomic::{AtomicU64, Ordering};
@@ -43,6 +43,34 @@ const BAUD_115200: u64 = 115_200;
 
 /// Physical base of the active UART, or zero when no console is available.
 static UART_BASE: AtomicU64 = AtomicU64::new(0);
+static GENI_BASE: AtomicU64 = AtomicU64::new(0);
+
+// Qualcomm GENI Serial Engine register offsets (QUPv3).
+const GENI_FW_REVISION_RO: usize = 0x068;
+const GENI_DMA_MODE_EN: usize = 0x258;
+const GENI_STATUS: usize = 0x040;
+const GENI_M_CMD0: usize = 0x600;
+const GENI_M_CMD_CTRL: usize = 0x604;
+const GENI_M_IRQ_STATUS: usize = 0x610;
+const GENI_M_IRQ_EN: usize = 0x614;
+const GENI_M_IRQ_CLEAR: usize = 0x618;
+const GENI_TX_TRANS_LEN: usize = 0x270;
+const GENI_TX_FIFO: usize = 0x700;
+const GENI_TX_WATERMARK: usize = 0x80c;
+
+const GENI_PROTOCOL_SHIFT: u32 = 8;
+const GENI_PROTOCOL_MASK: u32 = 0xff << GENI_PROTOCOL_SHIFT;
+const GENI_PROTOCOL_UART: u32 = 2;
+const GENI_DMA_MODE: u32 = 1 << 0;
+const GENI_CMD_ACTIVE: u32 = 1 << 0;
+const GENI_CMD_DONE: u32 = 1 << 0;
+const GENI_CMD_ABORT: u32 = 1 << 1;
+const GENI_CMD_ABORTED: u32 = 1 << 5;
+const GENI_TX_WATERMARK_REACHED: u32 = 1 << 30;
+const GENI_UART_START_TX: u32 = 1;
+const GENI_OPCODE_SHIFT: u32 = 27;
+const GENI_TX_WATERMARK_LEVEL: u32 = 2;
+const GENI_POLL_LIMIT: u32 = 1_000_000;
 
 /// Serializes complete formatted writes across cores. IRQs are masked while
 /// the lock is held, so an interrupt handler cannot deadlock against the core
@@ -77,6 +105,43 @@ pub fn init(base: u64) {
     }
 }
 
+/// Enable a firmware-configured Qualcomm GENI UART for bounded polling output.
+///
+/// SPCR interface type 0x13 identifies the SDM845 7.372 MHz UART interface.
+/// The firmware is expected to have configured its clocks, pin mux and UART
+/// protocol. We verify the protocol and refuse to touch a DMA-mode engine;
+/// baud/clock programming and sequencer reset are intentionally omitted.
+pub fn init_geni(base: u64) -> Result<(), &'static str> {
+    if base == 0 || base & 0x3 != 0 {
+        return Err("GENI UART base is zero or unaligned");
+    }
+
+    // SPCR is validated by the loader and the linear map covers this range,
+    // but the QUP power domain may still be off. Contain an external abort
+    // while checking the firmware protocol instead of crashing the kernel.
+    let virtual_base = phys_to_virt(base) as u64;
+    let revision = crate::arch::aarch64::probe_read32(
+        virtual_base + GENI_FW_REVISION_RO as u64,
+    )
+    .map_err(|_| "GENI UART MMIO window is not accessible")?;
+    let protocol = (revision & GENI_PROTOCOL_MASK) >> GENI_PROTOCOL_SHIFT;
+    if protocol != GENI_PROTOCOL_UART {
+        return Err("GENI firmware is not configured for UART");
+    }
+
+    // Never write the FIFO if firmware left the engine in DMA mode.
+    let mode = crate::arch::aarch64::probe_read32(
+        virtual_base + GENI_DMA_MODE_EN as u64,
+    )
+    .map_err(|_| "GENI UART DMA-mode register is not accessible")?;
+    if mode & GENI_DMA_MODE != 0 {
+        return Err("GENI UART is in DMA mode; polling FIFO output is unsafe");
+    }
+
+    GENI_BASE.store(base, Ordering::Release);
+    Ok(())
+}
+
 /// Activate the GOP framebuffer text console. The UART, if present, remains
 /// active; output is mirrored to both consoles.
 pub fn init_framebuffer(info: &FramebufferInfo) -> Result<(), &'static str> {
@@ -89,26 +154,101 @@ pub fn framebuffer_active() -> bool {
 }
 
 pub fn write_byte(byte: u8) {
-    // The framebuffer is independent of the UART: on the laptop the firmware
-    // describes a Qualcomm UART that this milestone cannot drive, so the screen
-    // may be the only visible console.
+    // Mirror output to the framebuffer, PL011 and (when validated) GENI UART.
     crate::fb::write_byte(byte);
 
     let base = UART_BASE.load(Ordering::Relaxed);
-    if base == 0 {
-        return;
+    if base != 0 {
+        // SAFETY: `base` was validated by `init` and points at a PL011.
+        unsafe {
+            let mut ready = false;
+            for _ in 0..1_000_000 {
+                if mmio_read(base, UART_FR) & FR_TXFF == 0 {
+                    ready = true;
+                    break;
+                }
+                core::hint::spin_loop();
+            }
+            if ready {
+                mmio_write(base, UART_DR, byte as u32);
+            }
+        }
     }
 
-    // SAFETY: `base` was validated by `init` and points at a PL011.
-    unsafe {
-        let mut spins = 0u32;
-        while mmio_read(base, UART_FR) & FR_TXFF != 0 {
-            if spins >= 1_000_000 {
-                return;
-            }
-            spins += 1;
+    let geni = GENI_BASE.load(Ordering::Acquire);
+    if geni != 0 && !geni_putc(geni, byte) {
+        // A stuck/disabled engine must not stall the rest of the kernel log.
+        GENI_BASE.store(0, Ordering::Release);
+    }
+}
+
+fn geni_wait(base: u64, offset: usize, mask: u32, set: bool) -> bool {
+    for _ in 0..GENI_POLL_LIMIT {
+        let value = unsafe { mmio_read(base, offset) } & mask;
+        if (value != 0) == set {
+            return true;
         }
-        mmio_write(base, UART_DR, byte as u32);
+        core::hint::spin_loop();
+    }
+    false
+}
+
+/// Send one byte using the GENI UART FIFO sequencer. All waits are bounded.
+fn geni_putc(base: u64, byte: u8) -> bool {
+    if !geni_wait(base, GENI_STATUS, GENI_CMD_ACTIVE, false) {
+        return false;
+    }
+
+    unsafe {
+        // Enable only the two status sources consumed by this polling path.
+        let irq_enable = mmio_read(base, GENI_M_IRQ_EN)
+            | GENI_CMD_DONE
+            | GENI_TX_WATERMARK_REACHED;
+        mmio_write(base, GENI_M_IRQ_EN, irq_enable);
+        mmio_write(
+            base,
+            GENI_M_IRQ_CLEAR,
+            GENI_CMD_DONE | GENI_TX_WATERMARK_REACHED | GENI_CMD_ABORTED,
+        );
+        mmio_write(base, GENI_TX_WATERMARK, GENI_TX_WATERMARK_LEVEL);
+        mmio_write(base, GENI_TX_TRANS_LEN, 1);
+        mmio_write(
+            base,
+            GENI_M_CMD0,
+            GENI_UART_START_TX << GENI_OPCODE_SHIFT,
+        );
+    }
+
+    if !geni_wait(base, GENI_M_IRQ_STATUS, GENI_TX_WATERMARK_REACHED, true) {
+        geni_abort(base);
+        return false;
+    }
+
+    unsafe {
+        mmio_write(base, GENI_TX_FIFO, byte as u32);
+        mmio_write(base, GENI_M_IRQ_CLEAR, GENI_TX_WATERMARK_REACHED);
+    }
+
+    if !geni_wait(base, GENI_M_IRQ_STATUS, GENI_CMD_DONE, true) {
+        geni_abort(base);
+        return false;
+    }
+
+    unsafe { mmio_write(base, GENI_M_IRQ_CLEAR, GENI_CMD_DONE) };
+    true
+}
+
+fn geni_abort(base: u64) {
+    unsafe {
+        mmio_write(base, GENI_M_CMD_CTRL, GENI_CMD_ABORT);
+    }
+    let _ = geni_wait(base, GENI_M_IRQ_STATUS, GENI_CMD_ABORTED, true);
+    unsafe {
+        mmio_write(
+            base,
+            GENI_M_IRQ_CLEAR,
+            GENI_CMD_DONE | GENI_TX_WATERMARK_REACHED | GENI_CMD_ABORTED,
+        );
     }
 }
 

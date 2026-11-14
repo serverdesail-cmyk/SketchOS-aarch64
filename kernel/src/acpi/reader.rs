@@ -15,6 +15,8 @@ use sketchos_bootinfo::phys_to_virt;
 /// Largest table this kernel will look at. Firmware tables are small; the cap
 /// prevents a corrupt length field from causing an enormous slice.
 pub const MAX_TABLE_LENGTH: usize = 0x10_0000;
+/// Current kernel physmap covers the first 512 GiB of physical address space.
+pub const MAX_PHYS_MAP_BYTES: u64 = 512u64 << 30;
 
 /// A validated ACPI system description table.
 #[derive(Clone, Copy)]
@@ -35,7 +37,12 @@ impl<'a> Table<'a> {
     /// still validates signature, length and checksum before interpreting any
     /// payload.
     pub unsafe fn from_raw(address: u64) -> Option<Self> {
-        if address == 0 || address % 4 != 0 {
+        if address == 0
+            || address % 4 != 0
+            || address
+                .checked_add(36)
+                .map_or(true, |end| end > MAX_PHYS_MAP_BYTES)
+        {
             return None;
         }
         let ptr = phys_to_virt(address) as *const u8;
@@ -49,7 +56,11 @@ impl<'a> Table<'a> {
         // SAFETY: as above; the length field is part of the 36-byte header.
         let length =
             u32::from_le(unsafe { core::ptr::read_unaligned(ptr.add(4).cast::<u32>()) }) as usize;
-        if !(36..=MAX_TABLE_LENGTH).contains(&length) {
+        if !(36..=MAX_TABLE_LENGTH).contains(&length)
+            || address
+                .checked_add(length as u64)
+                .map_or(true, |end| end > MAX_PHYS_MAP_BYTES)
+        {
             return None;
         }
 
@@ -171,7 +182,11 @@ impl Rsdp {
         // ACPI recommends 16-byte alignment, but firmware is not required to
         // honour it and QEMU/EDK2 hands off an 8-byte-aligned RSDP. All reads
         // below are unaligned-safe, so only a null address is rejected.
-        if address == 0 {
+        if address == 0
+            || address
+                .checked_add(36)
+                .map_or(true, |end| end > MAX_PHYS_MAP_BYTES)
+        {
             return None;
         }
         let ptr = phys_to_virt(address) as *const u8;
@@ -192,7 +207,11 @@ impl Rsdp {
         } else {
             20
         };
-        if !(20..=4096).contains(&length) {
+        if !(20..=4096).contains(&length)
+            || address
+                .checked_add(length as u64)
+                .map_or(true, |end| end > MAX_PHYS_MAP_BYTES)
+        {
             return None;
         }
         if revision >= 2 && length < 36 {

@@ -67,41 +67,64 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
         }
     };
 
-    // Install the fault table before touching any device. A bad UART or
-    // framebuffer address then produces a diagnostic instead of a silent hang.
+    // Install the fault table before touching any device.
     let vectors = arch::aarch64::install_exception_vectors();
 
+    // Initialize a supported serial console first, then the GOP framebuffer.
     if info.has_flag(FLAG_UART) && info.uart_kind == uart_kind::PL011 {
         console::init(info.uart_base);
     }
 
-    let counter_frequency = arch::aarch64::counter_frequency();
-    let start_ticks = arch::aarch64::counter();
-
-    // Decode ACPI while the firmware identity map is still active. This reads
-    // only firmware tables in RAM and never touches a device.
-    let platform = acpi::discover(&info);
-
-    // Replace the firmware map with kernel-owned tables. A failure is not
-    // fatal: the kernel continues under the firmware map and reports why.
-    let mmu_result = arch::aarch64::mmu::init(&info, platform.as_ref());
-
-    // The framebuffer is initialized after the MMU so the console draws through
-    // the final Normal Non-cacheable mapping rather than the firmware's.
+    // The loader already mapped the GOP buffer in the bootstrap physical map.
+    // Initialize it before ACPI discovery and before replacing the page tables,
+    // so failures in either stage remain visible on hardware without PL011.
     let mut framebuffer_console = false;
+    let mut framebuffer_error = None;
     if info.has_flag(FLAG_FRAMEBUFFER) {
         match console::init_framebuffer(&info.framebuffer) {
             Ok(()) => framebuffer_console = console::framebuffer_active(),
-            Err(reason) => {
-                // The UART may not exist on this machine, so this line can be
-                // invisible on real hardware. It is still useful under QEMU.
-                println!("Framebuffer console unavailable: {}", reason);
-            }
+            Err(reason) => framebuffer_error = Some(reason),
         }
+    }
+
+    // The loader identifies SPCR interface 0x13 as a Qualcomm GENI UART.
+    // Initialize only its read-only protocol/mode checks; the console driver
+    // leaves firmware clock, pinmux and baud configuration untouched.
+    if info.has_flag(FLAG_UART) && info.uart_kind == uart_kind::SDM845_GENI {
+        match console::init_geni(info.uart_base) {
+            Ok(()) => println!("GENI UART: firmware protocol verified; polling console active"),
+            Err(reason) => println!("GENI UART unavailable: {}", reason),
+        }
+    }
+    if let Some(reason) = framebuffer_error {
+        println!("Early framebuffer console unavailable: {}", reason);
     }
 
     println!();
     println!("SketchOS kernel 0.0.6 (AArch64)");
+    println!(
+        "Early entry: BootInfo valid, EL{} -> EL{}, framebuffer {}",
+        entry_el,
+        arch::aarch64::current_el(),
+        yes_no(framebuffer_console)
+    );
+
+    let counter_frequency = arch::aarch64::counter_frequency();
+    let start_ticks = arch::aarch64::counter();
+
+    // Decode ACPI while the loader's bootstrap map is still active. This reads
+    // firmware tables in RAM and does not initialize any device.
+    println!("ACPI: beginning table discovery");
+    let mut platform = acpi::discover(&info);
+    if let Some(platform) = platform.as_mut() {
+        platform.qemu_virt = info.has_flag(FLAG_QEMU_VIRT);
+    }
+
+    // Replace the firmware map with kernel-owned tables. A failure is not
+    // fatal: the kernel continues under the loader map and reports why.
+    println!("MMU: building kernel-owned translation tables");
+    let mmu_result = arch::aarch64::mmu::init(&info, platform.as_ref());
+
     println!(
         "Exceptions: VBAR_EL{} 0x{:016x}, table aligned: {}",
         arch::aarch64::current_el(),
@@ -195,7 +218,9 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
             "Debug UART: {} @ 0x{:016x}{}",
             uart_kind::name(info.uart_kind),
             info.uart_base,
-            if info.uart_kind == uart_kind::PL011 {
+            if info.uart_kind == uart_kind::PL011
+                || info.uart_kind == uart_kind::SDM845_GENI
+            {
                 ""
             } else {
                 " (driver not implemented yet)"
@@ -308,14 +333,35 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
     if let Err(reason) = selftest::heap_test() {
         fatal(&info, Some(platform), reason);
     }
-        storage::probe();
-        net::probe();
-        drm::init();
-        drm::report();
-        partition::enumerate();
-        partition::report();
-        nvme::probe_and_report();
-        let _ = fat32::Fat32::mount();
+    if info.has_flag(FLAG_QEMU_VIRT) {
+        storage::probe_qemu_virtio_mmio();
+        net::probe_qemu_virtio_mmio();
+    } else {
+        // 0x0a000000 is a QEMU virtio-mmio aperture, not a generic
+        // AArch64 bus. Do not touch it on the Snapdragon laptop.
+        println!("Storage: QEMU VirtIO-MMIO probe skipped on physical hardware");
+        println!("Net: QEMU VirtIO-MMIO probe skipped on physical hardware");
+    }
+    storage::report();
+    if info.has_flag(FLAG_FRAMEBUFFER) {
+        if let Err(reason) = drm::init_from_gop(info.framebuffer.width, info.framebuffer.height) {
+            println!("Display buffer scaffold unavailable: {}", reason);
+        }
+    }
+    drm::report();
+    partition::enumerate();
+    partition::report();
+    nvme::probe_and_report();
+    if info.has_flag(FLAG_QEMU_VIRT) {
+        match fat32::Fat32::mount() {
+            Ok(filesystem) => {
+                if let Err(reason) = filesystem.list_root() {
+                    println!("FAT32: root listing failed: {}", reason);
+                }
+            }
+            Err(reason) => println!("FAT32: not mounted: {}", reason),
+        }
+    }
 
     // Discover every enabled MADT processor and install this core's per-core
     // pointer before the GIC or the scheduler needs it.

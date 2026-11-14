@@ -1,4 +1,4 @@
-name: Build SketchOS AArch64 ISO
+name: SketchOS AArch64 validation and ISO
 
 on:
   pull_request:
@@ -13,8 +13,9 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  validate:
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -25,26 +26,67 @@ jobs:
           rustup toolchain install 1.99.1 --profile minimal \
             --target aarch64-unknown-none,aarch64-unknown-uefi
           rustup default 1.99.1
+          rustup component add rustfmt
 
-      - name: Install image tools
+      - name: Install build and emulator tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y dosfstools mtools xorriso
+          sudo apt-get install -y dosfstools mtools xorriso qemu-system-arm qemu-efi-aarch64
 
-      - name: Build ISO
+      - name: Check formatting of changed Rust files
+        shell: bash
+        run: |
+          git fetch --no-tags origin main
+          mapfile -t changed_rust < <(git diff --name-only origin/main...HEAD -- '*.rs')
+          if (("${#changed_rust[@]}" == 0)); then
+            echo "No Rust source files changed in this pull request"
+          else
+            rustfmt --edition 2021 --check "${changed_rust[@]}"
+          fi
+
+      - name: Run host-side memory and scheduler tests
+        run: cargo test --locked -p sketchos-mm -p sketchos-sched-core
+
+      - name: Build UEFI loader, kernel, userspace and ISO
         run: bash tools/build-iso.sh
 
-      - name: Upload ISO artifact
+      - name: Verify ISO checksum and AArch64 ELF properties
+        shell: bash
+        run: |
+          sha256sum -c images/SketchOS-AArch64.iso.sha256
+          readelf -h build/iso-root/EFI/SketchOS/kernel.elf | grep -q 'Class:.*ELF64'
+          readelf -h build/iso-root/EFI/SketchOS/kernel.elf | grep -q 'Data:.*little endian'
+          readelf -h build/iso-root/EFI/SketchOS/kernel.elf | grep -q 'Machine:.*AArch64'
+          readelf -h build/iso-root/EFI/SketchOS/kernel.elf | grep -q 'Type:.*DYN'
+
+      - name: Check smoke test script syntax
+        run: bash -n tools/smoke-test-linux.sh
+
+      - name: Boot the actual ISO under AArch64 QEMU
+        run: bash tools/smoke-test-linux.sh
+
+      - name: Upload QEMU serial log (including failed boots)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SketchOS-QEMU-serial-log
+          path: build/qemu-smoke-serial.log
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Upload validated ISO
         uses: actions/upload-artifact@v4
         with:
           name: SketchOS-AArch64-ISO
           path: |
             images/SketchOS-AArch64.iso
             images/SketchOS-AArch64.iso.sha256
+            build/qemu-smoke-serial.log
           if-no-files-found: error
           retention-days: 30
 
       - name: Commit ISO to main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: bash
         run: |
           git config user.name "github-actions[bot]"

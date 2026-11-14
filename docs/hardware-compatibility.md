@@ -1,6 +1,6 @@
 # SketchOS hardware compatibility matrix
 
-Maintained document. Last audit: 2026-11-12 (milestone 0.0.6, QEMU only).
+Maintained document. Last audit: 2026-11-13 (hardware-first source/spec review; no physical laptop test yet).
 
 This file records what firmware describes, what SketchOS actually drives, and what is
 still missing. A hardware identifier in this document is **not** a support claim.
@@ -12,6 +12,7 @@ that platform.
 | Status | Meaning |
 | --- | --- |
 | **Verified** | Driver initialized the device and the result was observed in a test log. |
+| **Implemented, untested** | A driver path exists, but it has not been exercised on the named platform. |
 | **Decoded only** | Firmware table or identifier is parsed and reported; the device is not driven. |
 | **Enumerated only** | Bus enumeration found the device; no driver is bound. |
 | **Blocked** | A specific missing capability prevents progress (for example, an unknown UART register layout). |
@@ -53,8 +54,8 @@ driver results.
 | MMU | 4 KiB granule, 48-bit VA, four levels, split TTBR0/TTBR1 | Verified | `MMU: higher half, TTBR1 ..., 24 tables of 2048, physmap 3 GiB`; `TCR 0x00000005b5103510, MAIR 0x00000000004400ff` |
 | Physical allocator | UEFI map, 4 KiB pages, 32 GiB bitmap span | Verified | `Physical self-test: PASS (... scrub, reservations)` |
 | Kernel heap | Address-ordered first fit, 8 MiB cap | Verified | `Heap self-test: PASS (... growth, growth cap, ...)` |
-| GIC | GICv3, distributor `0x08000000`, per-core redistributors | Verified | `GIC: GICv3+ ... timer PPI 30`; each core reports its `GICR` base |
-| Generic timer | CNTP, one-shot, 1 GHz counter | Verified | `Timer: CNTP one-shot, 1000000000 Hz counter, 1 ns resolution`; every core arms its own events |
+| GIC | GICv3, distributor `0x08000000`, per-core redistributors | Verified | `GIC: GICv3+ ...`; each core reports its `GICR` base; timer PPI is now selected from GTDT |
+| Generic timer | GTDT-selected system-register timer, one-shot | Verified in earlier QEMU build; current source pairing not re-run in QEMU | Earlier log recorded a 1 GHz counter; current code selects CNTV or CNTP together with its matching GTDT GSIV |
 | SMP discovery | MADT enabled `GICC` entries | Verified | `SMP: 8 discovered, 8 expected online` |
 | Secondary startup | PSCI `CPU_ON`, 8 CPUs | Verified | `core 1..7: online ... startup ... us, GICR ...` |
 | IPIs | GICv3 SGIs 0-3 via `ICC_SGI1R_EL1` | Verified | `IPI: 7 secondaries answered a ping/pong round trip` |
@@ -102,8 +103,9 @@ laptop by SketchOS.
 | 6 | `0x70000000` | 00-01 |
 | 7 | `0x74000000` | 00-01 |
 
-The current enumerator can walk these windows only after the MMU maps them. It has
-not been run on the laptop.
+The current enumerator validates 1 MiB alignment and the complete 512 GiB physmap
+range, then uses fault-contained reads and skips a window if its first ECAM access
+aborts. It has not been run on the laptop.
 
 ## Core platform devices
 
@@ -112,13 +114,22 @@ not been run on the laptop.
 | GIC distributor | ACPI MADT GICD; laptop `0x17000000` v4, QEMU `0x08000000` v3 | QEMU virt verified; laptop untested | MADT with GICD/GICR entries; GICv3/v4 system-register interface | **Verified on QEMU**; laptop untested | Map distributor Device-nGnRnE; read GICD_TYPER/DS; enable non-secure Group 1; wait RWP | Timer PPI 30 on QEMU; laptop PPI/SPI assignments not yet driven | None | None | Timer, IPIs and scheduler run on all eight QEMU cores | Assumes one security-state view in `GICD_CTLR`; no GICv2; no SPI routing |
 | GIC redistributors | ACPI MADT GICR; laptop `0x17080000`..`0x17340000`, step `0x40000` | QEMU verified on all eight cores; laptop untested | MADT GICR ranges; GICv4 VLPI frame if present | **Verified on QEMU** (every online core) | Map each range; detect 256 KiB vs 128 KiB stride from GICR_TYPER.VLPIS; wake redistributor; program PPI and SGIs | Timer PPI and SGIs 0-3 | None | None | Each core finds its frame by MPIDR, wakes it and initializes its own CPU interface | `GICR_TYPER == 0` frames are skipped; no ITS/LPI; no SPI routing |
 | GIC ITS | ACPI MADT ITS; laptop `0x17040000` | None | MADT ITS entry; GICv4 | **Decoded only** | Map ITS; allocate device tables/collections; enable LPIs | MSI/MSI-X to LPI | Requires IOMMU/SMMUv3 stream table | None | Not tested | No ITS or LPI support |
-| Generic timer | ACPI GTDT; laptop system-register timer | QEMU verified on every core; laptop untested | GTDT non-secure EL1 timer GSIV; `CNTFRQ_EL0` | **Verified on QEMU** | Program `CNTP_CTL_EL0`/`CNTP_CVAL_EL0`; read `CNTFRQ_EL0`; each core programs its own timer | Per-core PPI 30 on QEMU | None | None | One-shot events on every online core; 1000-ms EEVDF demo, 15 tickless idle disarms | Uses `CNTVCT_EL0` for time but `CNTP_*` for interrupts; no wall clock or timekeeping |
+| Generic timer | ACPI GTDT; laptop system-register timer | QEMU verified in the prior 0.0.6 build; laptop untested | GTDT Virtual EL1 GSIV or non-secure Physical EL1 GSIV; `CNTFRQ_EL0` | **Implemented, untested** for the new source-paired path | Virtual source uses `CNTV_*`; physical source uses `CNTP_*`; counter reads match the selected source | Per-core PPI taken from the matching GTDT field | None | None | Earlier QEMU run verified one-shot events on all online cores; hardware branch now rejects an invalid GTDT source | No wall clock or persistent timekeeping; current hardware branch has not been physically exercised |
 | PSCI | ACPI FADT ARM boot flags; laptop `0x0001` (SMC) | QEMU verified; laptop not invoked | FADT PSCI-compliant flag and conduit; `PSCI_VERSION` | **Verified on QEMU** (`CPU_ON` and `SYSTEM_OFF`) | Use SMC or HVC per FADT; 64-bit `CPU_ON` only for PSCI 0.2+; `SYSTEM_OFF` always uses the 32-bit ID | None | None | `CPU_ON`, `SYSTEM_OFF` | Eight CPUs started and the machine powered off | No `CPU_OFF`, `SUSPEND`, hotplug or affinity-info use; QEMU flag gates power-off |
-| SPCR UART | ACPI SPCR; laptop interface `0x13` at `0x894000`; QEMU interface `0x03` at `0x09000000` | QEMU PL011 verified; laptop **Blocked** | SPCR GAS; for PL011, correct reference clock | **Verified on QEMU**; laptop **Blocked** | PL011: clock divisor, FIFO, CR; laptop: unknown Qualcomm register layout | Laptop GSIV 386; not used | None | None | QEMU serial log; laptop silent | Hard-coded 24 MHz PL011 clock; no Qualcomm UART driver; early laptop output is lost |
+| SPCR UART | ACPI SPCR; laptop interface `0x13` at `0x894000`; QEMU interface `0x03` at `0x09000000` | QEMU PL011 verified; laptop GENI path untested | SPCR GAS; interface `0x13` identifies SDM845 7.372 MHz UART programming model | **Verified on QEMU**; laptop **Implemented, untested** | PL011: 24 MHz QEMU clock; GENI: verify UART firmware protocol and FIFO mode, reuse firmware baud/clock configuration | GENI early console is polling-only; laptop GSIV 386 is not enabled | None | QUP clock/power state must already be enabled by firmware | QEMU serial log; no laptop GENI capture yet | No RX, no GENI firmware loading, no QUP clock/power/reset management; firmware must leave the UART engine initialized |
 | DBG2 debug ports | ACPI DBG2; laptop 7 entries including `\_SB.UARD` | None | DBG2 | **Decoded only** | Namespace and GAS parsing | GSIV from DBG2/SPCR | None | None | Not tested | No debug-port driver |
-| PCIe root complexes | ACPI `PNP0A08` (two on laptop) | None | MCFG ECAM windows; ACPI namespace | **Enumerated only** | Map ECAM; walk buses; assign BARs | MSI/MSI-X/INTx | Requires IOMMU for safe DMA | PCIe power/clock control | QEMU ECAM walk; laptop not run | No BAR assignment, no config writes, no hotplug, no power management |
+| PCIe root complexes | ACPI `PNP0A08` (two on laptop) | None | MCFG ECAM windows; ACPI namespace | **Enumerated only** | MCFG windows are alignment/range-checked; ECAM reads are fault-contained; BAR assignment remains unimplemented | MSI/MSI-X/INTx | Requires IOMMU for safe DMA | PCIe power/clock control | QEMU ECAM walk; laptop not run | No BAR assignment, no config writes, no hotplug, no power management; root-complex power sequencing still needs AML |
 | TPM 2.0 | ACPI TPM2; laptop control area `0x81f10000`, start method 14 | None | TPM2 table; CRB or FIFO interface | **Decoded only** | Map control area; follow start method; command interface | None | None | None | Not tested | No TPM command driver |
 | BGRT | ACPI BGRT; laptop image `0xcfdaa018` | None | BGRT | **Decoded only** | Parse image header; map image | None | None | None | Not displayed | No boot-logo rendering |
+
+## QEMU-only transport isolation
+
+The VirtIO-MMIO aperture beginning at physical `0x0a000000` belongs to the QEMU
+`virt` machine. The storage and network probes now run only when the loader sets
+`FLAG_QEMU_VIRT`. On the Snapdragon path they are skipped entirely; no read, queue
+setup, DRIVER_OK write or DMA enable is attempted at that address. Physical storage
+and networking must be discovered through the laptop's ACPI/PCI resources and real
+controller drivers.
 
 ## Laptop device matrix
 
@@ -138,24 +149,29 @@ not been run on the laptop.
 | Cameras | ACPI `QCOM0C32`, `VEN_QCOM&DEV_0C25` | None | Camera firmware, sensor drivers, ISP configuration | **Unimplemented** | Not investigated | Not decoded | Requires IOMMU and DMA | Camera power domains | Not tested | Out of scope for this milestone |
 | PCIe root complexes | ACPI `PNP0A08` (two) | None | MCFG; ACPI namespace | **Enumerated only** | ECAM mapping and bus walk | MSI/INTx | IOMMU for downstream devices | PCIe power/clock | QEMU walk only | No resource assignment or hotplug |
 
-## Serial console: the laptop blocker in detail
+## Serial console: laptop GENI early-output path
 
 QEMU's SPCR describes interface type `0x03` (PL011) at `0x09000000`, so the kernel
 drives it and the smoke test captures a log.
 
-The laptop's SPCR describes interface type `0x13` at `0x894000`. That is a
-Qualcomm/SDM845-style UART, not a PL011. The kernel intentionally refuses to guess its
-register layout (`kernel/src/console.rs:1-7`). Until a documented driver exists, the
-laptop produces no SketchOS serial output. The GOP framebuffer console is the only
-visible output path, and it starts only after the MMU step.
+The laptop's SPCR describes interface type `0x13` at `0x894000`, GSIV 386 and baud
+code 7. ACPI defines type `0x13` as the SDM845 7.372 MHz UART interface; Qualcomm's
+U-Boot documentation identifies SDM845-and-newer debug UARTs as GENI Serial Engine
+UARTs. The hardware branch now recognizes this type and has a polling-only TX path
+that checks the GENI UART protocol and refuses DMA mode. It deliberately does not
+reset the engine or reprogram clocks/baud. This is **implemented but untested** on the
+X1P laptop; if firmware has not left the QUP engine powered and configured, the
+console will remain unavailable. The path has no RX support and is not a full QUP
+serial driver.
 
 ## Display and framebuffer
 
 QEMU with `-display none` exposes no GOP framebuffer. The `-Framebuffer` smoke test
 adds `-device ramfb` and verifies the text console. The laptop's 2240x1400 panel is a
-different device: the current framebuffer code consumes only the GOP linear
-framebuffer reported by the loader. It does not drive the panel, DSI, backlight, or
-GPU.
+different device: the framebuffer code consumes only the GOP linear framebuffer
+reported by the loader. The kernel now initializes that console before ACPI discovery
+and before replacing the loader's page tables, and uses volatile scanout writes. It
+does not drive the panel, DSI, backlight, or GPU.
 
 ## DMA and IOMMU requirements
 
@@ -217,12 +233,11 @@ accepts `-Accel whpx` only as a diagnostic that is expected to fail. No kernel
 timer fallback was added: selecting a different architectural timer is a kernel
 design change, not a QEMU option, and it would still leave the firmware hang.
 
-After this work the kernel **was** switched to the EL1 virtual timer (`CNTV_*`,
-PPI 27) in `kernel/src/arch/aarch64/timer.rs` and `gic.rs`, because that is the
-timer a hypervisor exposes (WHPX's vGIC wires only `Cntv`) and on bare metal
-`CNTVOFF_EL2` is zero. That removes the kernel-side CNTP fault, so a future
-firmware that boots under WHPX would run. The bundled EDK2 still hangs, so the
-smoke test's `-Accel whpx` path is still a documented failure.
+The hardware-first branch now selects the timer register bank and interrupt ID as
+a matched pair from GTDT: Virtual EL1 uses `CNTV_*`, while non-secure Physical EL1
+uses `CNTP_*`. This avoids silently enabling a physical PPI while programming the
+virtual timer (or vice versa). The branch has not been run under QEMU or on the laptop;
+WHPX's separate firmware limitation remains a historical host-side issue.
 ## Test log (historical: milestone 0.0.5)
 
 This section preserves the 0.0.5 evidence exactly as it was recorded. It is **not**

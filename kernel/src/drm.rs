@@ -16,6 +16,7 @@
 //! - Cache-line-aligned (128 B) buffer descriptors to avoid false sharing.
 
 use crate::phys;
+use crate::sync::IrqSpinLock;
 
 pub const MAX_DUMB_BUFFERS: usize = 16;
 
@@ -43,24 +44,28 @@ pub struct DrmDevice {
     pub buffer_count: usize,
 }
 
-static mut DRM: Option<DrmDevice> = None;
+static DRM: IrqSpinLock<Option<DrmDevice>> = IrqSpinLock::new(None);
 
-pub fn device() -> Option<&'static mut DrmDevice> {
-    unsafe { DRM.as_mut() }
-}
-
-pub fn init() {
+/// Initialize the software buffer scaffold from the firmware GOP mode.
+/// Refresh rate is unknown because GOP does not report it through BootInfo;
+/// this does not initialize a native DRM/KMS or Adreno display driver.
+pub fn init_from_gop(width: u32, height: u32) -> Result<(), &'static str> {
+    if width == 0 || height == 0 {
+        return Err("GOP framebuffer dimensions are invalid");
+    }
     let dev = DrmDevice {
-        mode: Mode { width: 1920, height: 1080, refresh_hz: 60, bpp: 32 },
+        mode: Mode { width, height, refresh_hz: 0, bpp: 32 },
         buffers: [GemObject { phys_base: 0, size: 0, width: 0, height: 0, pitch: 0, in_use: false }; MAX_DUMB_BUFFERS],
         buffer_count: 0,
     };
-    unsafe { DRM = Some(dev); }
+    *DRM.lock() = Some(dev);
+    Ok(())
 }
 
 /// Allocate a dumb buffer of `width x height` at `bpp` bits. Returns its handle index.
 pub fn alloc_dumb(width: u32, height: u32, bpp: u32) -> Result<usize, &'static str> {
-    let dev = device().ok_or("no drm device")?;
+    let mut guard = DRM.lock();
+    let dev = guard.as_mut().ok_or("no display device")?;
     if dev.buffer_count >= MAX_DUMB_BUFFERS {
         return Err("too many buffers");
     }
@@ -85,13 +90,31 @@ pub fn alloc_dumb(width: u32, height: u32, bpp: u32) -> Result<usize, &'static s
 }
 
 pub fn set_mode(mode: Mode) {
-    if let Some(dev) = device() {
+    if let Some(dev) = DRM.lock().as_mut() {
         dev.mode = mode;
     }
 }
 
 pub fn report() {
-    if let Some(dev) = device() {
-        crate::println!("DRM: mode {}x{}@{} ({} bpp), {} dumb buffers", dev.mode.width, dev.mode.height, dev.mode.refresh_hz, dev.mode.bpp, dev.buffer_count);
+    let guard = DRM.lock();
+    if let Some(dev) = guard.as_ref() {
+        if dev.mode.refresh_hz == 0 {
+            crate::println!(
+                "Display scaffold: GOP {}x{} ({} bpp, refresh unknown), {} dumb buffers; no KMS/Adreno driver",
+                dev.mode.width,
+                dev.mode.height,
+                dev.mode.bpp,
+                dev.buffer_count
+            );
+        } else {
+            crate::println!(
+                "Display scaffold: {}x{}@{} ({} bpp), {} dumb buffers; no KMS/Adreno driver",
+                dev.mode.width,
+                dev.mode.height,
+                dev.mode.refresh_hz,
+                dev.mode.bpp,
+                dev.buffer_count
+            );
+        }
     }
 }

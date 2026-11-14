@@ -151,7 +151,9 @@ pub unsafe fn enter(info: BootInfo, kernel: LoadedKernel) -> ! {
         .max(map_ptr as u64 + map_span);
     for entry in final_map.entries() {
         if count == capacity {
-            break;
+            // Never hand the kernel a silently truncated memory map. A partial
+            // map can make reserved RAM or MMIO look allocatable/unmapped.
+            panic!("final UEFI memory map exceeds preallocated descriptor capacity");
         }
 
         let raw_kind = entry.ty.0;

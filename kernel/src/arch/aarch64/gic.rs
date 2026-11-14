@@ -85,7 +85,16 @@ const PRIVATE_PRIORITY: u8 = 0xa0;
 
 static GICD_BASE: AtomicU64 = AtomicU64::new(0);
 static GICR_BASE: AtomicU64 = AtomicU64::new(0);
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TimerKind {
+    /// CNTV_* registers and GTDT Virtual EL1 GSIV.
+    Virtual = 0,
+    /// CNTP_* registers and GTDT non-secure Physical EL1 GSIV.
+    Physical = 1,
+}
+
 static TIMER_IRQ: AtomicU32 = AtomicU32::new(TIMER_PPI_DEFAULT);
+static TIMER_KIND: AtomicU32 = AtomicU32::new(TimerKind::Virtual as u32);
 static READY: AtomicBool = AtomicBool::new(false);
 
 /// Initialize the distributor, the boot CPU's redistributor and the boot CPU's
@@ -116,9 +125,10 @@ pub fn init_cpu(platform: &Platform, core_mpidr: u64) -> Result<u64, &'static st
         return Err("GICv3 CPU interface requires EL1");
     }
 
-    let timer_irq = timer_irq_from_platform(platform);
-    if timer_irq >= 32 {
-        return Err("GTDT timer interrupt is not a private interrupt");
+    let (timer_irq, timer_kind) = timer_source_from_platform(platform)
+        .ok_or("GTDT does not describe a usable non-secure EL1 timer")?;
+    if !(16..32).contains(&timer_irq) {
+        return Err("GTDT timer GSIV is not a GIC private peripheral interrupt");
     }
 
     // SAFETY: every MMIO address comes from MADT and is mapped Device-nGnRnE
@@ -129,6 +139,7 @@ pub fn init_cpu(platform: &Platform, core_mpidr: u64) -> Result<u64, &'static st
         configure_private_interrupts(gicr, timer_irq);
         enable_cpu_interface()?;
         TIMER_IRQ.store(timer_irq, Ordering::Release);
+        TIMER_KIND.store(timer_kind as u32, Ordering::Release);
         Ok(gicr)
     }
 }
@@ -138,9 +149,17 @@ pub fn is_ready() -> bool {
     READY.load(Ordering::Acquire)
 }
 
-/// Timer PPI number selected from GTDT, or the architectural default.
+/// Timer PPI number selected from GTDT, or the architectural virtual-timer default.
 pub fn timer_irq() -> u32 {
     TIMER_IRQ.load(Ordering::Acquire)
+}
+
+/// Timer register bank paired with the selected timer PPI.
+pub fn timer_kind() -> TimerKind {
+    match TIMER_KIND.load(Ordering::Acquire) {
+        value if value == TimerKind::Physical as u32 => TimerKind::Physical,
+        _ => TimerKind::Virtual,
+    }
 }
 
 /// Distributor and redistributor bases, for diagnostics.
@@ -243,19 +262,29 @@ pub fn report() {
     );
 }
 
-fn timer_irq_from_platform(platform: &Platform) -> u32 {
+fn timer_source_from_platform(platform: &Platform) -> Option<(u32, TimerKind)> {
+    // The architected EL1 timer PPI is level-sensitive and active-high.
+    // GTDT bit 0 describes edge/level and bit 1 polarity; reserved or
+    // unsupported values are rejected rather than silently misconfigured.
+    let flags_supported = |flags: u32| flags == 0;
     match platform.timer {
         Some(timer)
-            if timer.virtual_el1_gsiv != 0 && timer.virtual_el1_gsiv != u32::MAX =>
+            if timer.virtual_el1_gsiv != 0
+                && timer.virtual_el1_gsiv != u32::MAX
+                && flags_supported(timer.virtual_el1_flags) =>
         {
-            timer.virtual_el1_gsiv
+            Some((timer.virtual_el1_gsiv, TimerKind::Virtual))
         }
         Some(timer)
-            if timer.non_secure_el1_gsiv != 0 && timer.non_secure_el1_gsiv != u32::MAX =>
+            if timer.non_secure_el1_gsiv != 0
+                && timer.non_secure_el1_gsiv != u32::MAX
+                && flags_supported(timer.non_secure_el1_flags) =>
         {
-            timer.non_secure_el1_gsiv
+            Some((timer.non_secure_el1_gsiv, TimerKind::Physical))
         }
-        _ => TIMER_PPI_DEFAULT,
+        Some(_) => None,
+        None if platform.qemu_virt => Some((TIMER_PPI_DEFAULT, TimerKind::Virtual)),
+        None => None,
     }
 }
 

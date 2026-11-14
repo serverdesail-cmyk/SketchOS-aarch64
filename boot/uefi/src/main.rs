@@ -19,6 +19,7 @@
 extern crate alloc;
 
 mod acpi;
+mod dma;
 mod elf;
 mod handoff;
 mod platform;
@@ -58,6 +59,7 @@ fn main() -> Status {
     uefi::println!("SketchOS UEFI loader 0.0.6 (AArch64)");
     uefi::println!("Firmware vendor: {}", system::firmware_vendor());
     uefi::println!("Firmware revision: 0x{:08x}", system::firmware_revision());
+    platform::report_boot_cpu_state();
 
     let (loader_start, loader_end) = platform::loader_range().unwrap_or((0, 0));
     if loader_start != 0 {
@@ -173,6 +175,11 @@ fn main() -> Status {
     } else {
         uefi::println!("Debug UART: none described by firmware");
     }
+
+    // All firmware disk/filesystem work is complete. Quiesce PCI bus masters
+    // before the kernel starts allocating RAM, as required by the arm64 boot
+    // protocol. This also avoids stale device DMA corrupting early page tables.
+    dma::quiesce_pci_bus_masters();
 
     // Put the final handoff marker at the absolute top-left of the UEFI
     // text console. Keep it visible while ExitBootServices and the branch to

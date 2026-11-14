@@ -30,6 +30,10 @@
     .equ BOOT_MAIR,              232
     .equ BOOT_KERNEL_VA_START,   240
 
+    /* Linux arm64's baseline SCTLR_EL1 RES1 bits. Do not inherit an unknown
+     * EL1 control-register value when UEFI entered at EL2. */
+    .equ SCTLR_EL1_RES1,         0x30500800
+
     .section ".text._start", "ax"
     .global _start
     .type _start, %function
@@ -43,6 +47,33 @@ _start:
     mrs     x19, CurrentEL
     lsr     x19, x19, #2
     and     x19, x19, #3
+
+    /*
+     * Install a valid vector base before touching BSS or changing cache/MMU
+     * state. Otherwise a synchronous fault in the first instructions vectors
+     * through firmware's unknown VBAR and is effectively silent. The full
+     * vector table uses SIMD registers, so grant FP access before enabling it.
+     */
+    mov     x9, #(3 << 20)          /* CPACR_EL1.FPEN = 0b11 */
+    msr     cpacr_el1, x9
+    cmp     x19, #2
+    b.hi    1f
+    cmp     x19, #2
+    b.ne    2f
+    mrs     x10, cptr_el2
+    bic     x10, x10, #(1 << 10)    /* TFP: allow Q-register saves in EL2 vectors */
+    msr     cptr_el2, x10
+2:
+    adrp    x9, exception_vectors
+    add     x9, x9, :lo12:exception_vectors
+    msr     vbar_el1, x9
+    cmp     x19, #2
+    b.ne    1f
+    adrp    x9, early_el2_vectors
+    add     x9, x9, :lo12:early_el2_vectors
+    msr     vbar_el2, x9
+1:
+    isb
 
     /* Load the translation plan before any register is reused. */
     ldr     x21, [x20, #BOOT_TTBR0_ROOT]
@@ -66,6 +97,30 @@ _start:
     b       1b
 
 2:
+    /*
+     * The BSS clear above may leave dirty cache lines. Clean+invalidate the
+     * identity-mapped physical range to PoC before SCTLR.C is cleared, or the
+     * zeroing can be lost when the data cache is disabled.
+     */
+    mrs     x4, ctr_el0
+    ubfx    x4, x4, #16, #4
+    mov     x5, #4
+    lsl     x5, x5, x4
+    adrp    x2, __bss_start
+    add     x2, x2, :lo12:__bss_start
+    adrp    x3, __bss_end
+    add     x3, x3, :lo12:__bss_end
+    sub     x6, x5, #1
+    bic     x2, x2, x6
+3:
+    cmp     x2, x3
+    b.hs    4f
+    dc      civac, x2
+    add     x2, x2, x5
+    b       3b
+4:
+    dsb     sy
+
     cmp     x19, #2
     b.eq    el2_setup
     cmp     x19, #1
@@ -87,6 +142,19 @@ _start:
  * x21..x26 = translation plan and bias
  */
 el2_setup:
+    /* Install physical exception vectors before changing EL1 state. The
+     * identity map covers the kernel image until the higher-half switch. */
+    adrp    x9, exception_vectors
+    add     x9, x9, :lo12:exception_vectors
+    msr     vbar_el2, x9
+    msr     vbar_el1, x9
+    isb
+
+    /* Give EL1 deterministic FP/SIMD access before any vector can save Q regs. */
+    mov     x9, #(3 << 20)
+    msr     cpacr_el1, x9
+    isb
+
     /* HCR_EL2: EL1 is AArch64, no VHE, and no traps from EL1 to EL2.
      * Clearing TGE means EL1 is a normal guest OS rather than the EL2 host.
      * Clearing TSC lets PSCI SMC calls reach EL3 directly. */
@@ -146,7 +214,9 @@ el2_setup:
  */
 el1_install:
     /*
-     * If entered at EL1, the firmware translation regime is still active.
+     * Install an architectural, little-endian EL1 baseline instead of
+     * read-modify-writing SCTLR_EL1. When UEFI runs at EL2, EL1's register
+     * state is not guaranteed to have been initialized by firmware.
      * Turn it off before replacing TTBR/TCR/MAIR: otherwise even a correct
      * new table can fault while the old regime is being reconfigured.
      *
@@ -154,10 +224,8 @@ el1_install:
      * so execution and data accesses remain physical while M is clear.
      * When called from EL2, these writes prepare the inactive EL1 regime.
      */
-    mrs     x9, sctlr_el1
-    bic     x9, x9, #(1 << 0)       /* M: MMU */
-    bic     x9, x9, #(1 << 2)       /* C: data cache */
-    bic     x9, x9, #(1 << 12)      /* I: instruction cache */
+    movz    x9, #0x0800
+    movk    x9, #0x3050, lsl #16   /* SCTLR_EL1_RES1, EE=0, E0E=0, M/C/I=0 */
     msr     sctlr_el1, x9
     dsb     sy
     isb
@@ -173,33 +241,64 @@ el1_install:
     dsb     ish
     isb
 
-    /* Preserve firmware RES1 bits while enabling the loader's translation
-     * roots and caches. Clear alignment checks and WXN for early boot code. */
-    mrs     x9, sctlr_el1
-    orr     x9, x9, #(1 << 0)      /* M */
-    orr     x9, x9, #(1 << 2)      /* C */
-    orr     x9, x9, #(1 << 12)     /* I */
-    bic     x9, x9, #(1 << 1)      /* A */
-    bic     x9, x9, #(1 << 3)      /* SA */
-    bic     x9, x9, #(1 << 4)      /* SA0 */
-    bic     x9, x9, #(1 << 19)     /* WXN */
+    /* Enable the new translation roots from a known EL1 state. This is the
+     * minimal Linux-style AArch64 baseline: RES1 plus M/C/I, little-endian,
+     * with optional controls left disabled until the kernel configures them. */
+    movz    x9, #0x181d
+    movk    x9, #0x3050, lsl #16   /* SCTLR_EL1_RES1 | M | C | I | SA | SA0 */
     msr     sctlr_el1, x9
     isb
     ret
 
 el1_install_enter:
+    /* UEFI may enter directly at EL1. Install vectors and FP access before
+     * touching the MMU so an early synchronous exception has a defined path. */
+    adrp    x9, exception_vectors
+    add     x9, x9, :lo12:exception_vectors
+    msr     vbar_el1, x9
+    mov     x9, #(3 << 20)
+    msr     cpacr_el1, x9
+    isb
     bl      el1_install
     b       el1_entry
 
 el1_entry:
-    /* Enable FP/SIMD at EL1 and EL0 (CPACR_EL1.FPEN = 0b11). The exception
-     * vectors save q0..q31, so this must happen before any vector can run.
-     * Read-modify-write preserves firmware settings for other coprocessors. */
-    mrs     x2, cpacr_el1
-    mov     x3, #(3 << 20)
-    orr     x2, x2, x3
+    /* Reassert the kernel's FP/SIMD policy at EL1. Other optional coprocessor
+     * features remain disabled until their own architectural setup exists. */
+    mov     x2, #(3 << 20)
     msr     cpacr_el1, x2
     isb
+
+    /*
+     * White 8x8 checkpoint: EL1 has executed ERET with the new MMU active,
+     * and the TTBR1 physical map can reach the GOP framebuffer. The later
+     * green 16x16 marker in el1_high proves the higher-half branch also worked.
+     */
+    ldr     x9, [x20, #104]
+    cbz     x9, .Lel1_fb_done
+    movz    x10, #0x0000
+    movk    x10, #0xc000, lsl #32
+    movk    x10, #0xffff, lsl #48
+    add     x9, x9, x10
+    ldr     w11, [x20, #120]
+    mov     w12, #0x00ffffff
+    mov     x13, #0
+.Lel1_fb_row:
+    cmp     x13, #8
+    b.hs    .Lel1_fb_done
+    mov     x14, #0
+.Lel1_fb_pixel:
+    cmp     x14, #8
+    b.hs    .Lel1_fb_next_row
+    madd    x15, x13, x11, x14
+    str     w12, [x9, x15, lsl #2]
+    add     x14, x14, #1
+    b       .Lel1_fb_pixel
+.Lel1_fb_next_row:
+    add     x13, x13, #1
+    b       .Lel1_fb_row
+.Lel1_fb_done:
+    dsb     sy
 
     /* Move to the higher half. The stack and the continuation are physical
      * addresses biased by `kernel_va_start - kernel_phys_start`. */
@@ -440,3 +539,39 @@ secondary_park:
     b       secondary_park
 
     .size secondary_entry, . - secondary_entry
+
+
+// EL2 is used only for the short firmware-to-EL1 transition. The general
+// exception_vectors table is an EL1 context-switch path and must not be used
+// to return from EL2. Any exception before ERET is recorded and parked here.
+.align 11
+.global early_el2_vectors
+early_el2_vectors:
+.rept 16
+    b early_el2_fault
+    .space 124
+.endr
+
+early_el2_fault:
+    msr daifset, #0xf
+    mrs x0, esr_el2
+    mrs x1, elr_el2
+    mrs x2, spsr_el2
+    mrs x3, far_el2
+    mrs x4, hpfar_el2
+    mrs x5, sctlr_el2
+    adrp x6, __early_el2_fault_record
+    add x6, x6, :lo12:__early_el2_fault_record
+    stp x0, x1, [x6]
+    stp x2, x3, [x6, #16]
+    stp x4, x5, [x6, #32]
+    dsb sy
+2:
+    wfe
+    b 2b
+
+.section .bss, "aw", %nobits
+.align 3
+.global __early_el2_fault_record
+__early_el2_fault_record:
+    .skip 48

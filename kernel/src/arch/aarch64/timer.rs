@@ -1,36 +1,74 @@
-//! One-shot generic timer for the EL1 virtual timer.
+//! One-shot generic timer selected from the ACPI GTDT.
 //!
-//! The scheduler decides when it next needs to run and programs `CNTV_CVAL_EL0`
-//! for exactly that instant. There is no periodic tick: an idle core can mask
-//! the timer and execute `WFI`, and a busy core is interrupted only when its
-//! current slice request or a timer wait expires.
-//!
-//! `CNTVCT_EL0` is the (possibly offset) virtual counter the compare register is checked
-//! against. The virtual counter is the one WHPX exposes to guests; using it for both\r\n//! reading and comparison keeps deadlines consistent under a hypervisor.
-//!
-//! This module does not use the GTDT memory-mapped timer frames: the
-//! architecture's system-register timer is always available at EL1.
+//! The interrupt ID and timer register bank are selected as a matched pair:
+//! Virtual EL1 GSIV uses CNTV_*; non-secure Physical EL1 GSIV uses CNTP_*.
+//! This avoids enabling one PPI while programming the other timer source.
+//! There is no periodic tick: idle cores mask their timer and execute WFI.
 
 use core::arch::asm;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use crate::arch::aarch64::counter_frequency;
+use crate::arch::aarch64::{counter_frequency, gic::TimerKind};
 use crate::println;
 
 /// The shortest interval the scheduler will program. A zero or past deadline
 /// would keep the level-sensitive PPI asserted and storm the core.
 pub const MIN_EVENT_NS: u64 = 100_000;
 
-/// `cntv_ctl_el0`: interrupt masked (timer still counts).
-const CNTV_CTL_IMASK: u64 = 1 << 1;
-/// `cntv_ctl_el0`: timer enabled, interrupt unmasked.
-const CNTV_CTL_ENABLE: u64 = 1 << 0;
+/// Architectural timer control bit: interrupt masked, counter still counts.
+const TIMER_CTL_IMASK: u64 = 1 << 1;
+/// Architectural timer control bit: timer enabled, interrupt unmasked.
+const TIMER_CTL_ENABLE: u64 = 1 << 0;
 
 static READY: AtomicBool = AtomicBool::new(false);
 static ARMED: AtomicBool = AtomicBool::new(false);
 static LAST_DEADLINE_NS: AtomicU64 = AtomicU64::new(0);
 static ARMED_EVENTS: AtomicU64 = AtomicU64::new(0);
 static DISARMS: AtomicU64 = AtomicU64::new(0);
+
+fn read_counter() -> u64 {
+    let mut ticks: u64 = 0;
+    // SAFETY: the GTDT-selected counter is enabled for non-secure EL1.
+    unsafe {
+        match crate::arch::aarch64::gic::timer_kind() {
+            TimerKind::Virtual => {
+                asm!("mrs {}, CNTVCT_EL0", out(reg) ticks, options(nomem, nostack));
+            }
+            TimerKind::Physical => {
+                asm!("mrs {}, CNTPCT_EL0", out(reg) ticks, options(nomem, nostack));
+            }
+        }
+    }
+    ticks
+}
+
+fn write_control(value: u64) {
+    // SAFETY: the GTDT-selected timer control register is writable at EL1.
+    unsafe {
+        match crate::arch::aarch64::gic::timer_kind() {
+            TimerKind::Virtual => {
+                asm!("msr CNTV_CTL_EL0, {}", in(reg) value, options(nomem, nostack));
+            }
+            TimerKind::Physical => {
+                asm!("msr CNTP_CTL_EL0, {}", in(reg) value, options(nomem, nostack));
+            }
+        }
+    }
+}
+
+fn write_compare(value: u64) {
+    // SAFETY: the GTDT-selected timer compare register is writable at EL1.
+    unsafe {
+        match crate::arch::aarch64::gic::timer_kind() {
+            TimerKind::Virtual => {
+                asm!("msr CNTV_CVAL_EL0, {}", in(reg) value, options(nomem, nostack));
+            }
+            TimerKind::Physical => {
+                asm!("msr CNTP_CVAL_EL0, {}", in(reg) value, options(nomem, nostack));
+            }
+        }
+    }
+}
 
 fn frequency() -> u64 {
     counter_frequency().max(1)
@@ -46,32 +84,26 @@ fn ns_per_tick() -> u64 {
     }
 }
 
-/// Start the timer in a disarmed state. Every core programs its own
-/// `CNTV_*_EL0` registers; the boot core's counter frequency is shared.
+/// Start the selected timer in a disarmed state. Every core programs its own
+/// system-register timer; the architectural counter frequency is shared.
 pub fn init() -> Result<(), &'static str> {
     let frequency = counter_frequency();
     if frequency == 0 {
         return Err("generic timer frequency is zero");
     }
 
-    // SAFETY: CNTV_*_EL0 are accessible at EL1 on a non-secure kernel. Masking
-    // first stops any firmware-programmed deadline before CVAL changes.
-    unsafe {
-        asm!("msr cntv_ctl_el0, {}", in(reg) CNTV_CTL_IMASK, options(nomem, nostack));
-        asm!("msr cntv_cval_el0, {}", in(reg) u64::MAX, options(nomem, nostack));
-        asm!("isb", options(nomem, nostack));
-    }
+    // SAFETY: the selected system-register timer is accessible at EL1.
+    write_control(TIMER_CTL_IMASK);
+    write_compare(u64::MAX);
+    unsafe { asm!("isb", options(nomem, nostack)) };
     ARMED.store(false, Ordering::Release);
     READY.store(true, Ordering::Release);
     Ok(())
 }
 
-/// Current physical counter value in nanoseconds.
+/// Current selected architectural counter value in nanoseconds.
 pub fn now_ns() -> u64 {
-    let ticks: u64;
-    // SAFETY: CNTVCT_EL0 is readable at EL1 and is the counter CNTV_CVAL is
-    // compared against.
-    unsafe { asm!("mrs {}, CNTVCT_EL0", out(reg) ticks, options(nomem, nostack)) };
+    let ticks = read_counter();
     let frequency = frequency();
     ((ticks as u128 * 1_000_000_000u128) / frequency as u128) as u64
 }
@@ -94,13 +126,11 @@ pub fn arm_at_ns(deadline_ns: u64) {
     let target = ((deadline as u128 * frequency as u128) / 1_000_000_000u128) as u64;
 
     // SAFETY: called by the owning core with the scheduler lock held. Mask,
-    // program the compare value, then enable.
-    unsafe {
-        asm!("msr cntv_ctl_el0, {}", in(reg) CNTV_CTL_IMASK, options(nomem, nostack));
-        asm!("msr cntv_cval_el0, {}", in(reg) target, options(nomem, nostack));
-        asm!("msr cntv_ctl_el0, {}", in(reg) CNTV_CTL_ENABLE, options(nomem, nostack));
-        asm!("isb", options(nomem, nostack));
-    }
+    // program the selected compare value, then enable that timer source.
+    write_control(TIMER_CTL_IMASK);
+    write_compare(target);
+    write_control(TIMER_CTL_ENABLE);
+    unsafe { asm!("isb", options(nomem, nostack)) };
     LAST_DEADLINE_NS.store(deadline, Ordering::Relaxed);
     ARMED.store(true, Ordering::Release);
     ARMED_EVENTS.fetch_add(1, Ordering::Relaxed);
@@ -114,11 +144,9 @@ pub fn arm_ns(duration_ns: u64) {
 /// Mask the timer interrupt. Called at the start of the timer IRQ handler so
 /// the level-sensitive PPI is deasserted before end-of-interrupt.
 pub fn disarm() {
-    // SAFETY: cntv_ctl_el0 is writable at EL1 on the current core.
-    unsafe {
-        asm!("msr cntv_ctl_el0, {}", in(reg) CNTV_CTL_IMASK, options(nomem, nostack));
-        asm!("isb", options(nomem, nostack));
-    }
+    // SAFETY: the selected timer control register is writable at EL1.
+    write_control(TIMER_CTL_IMASK);
+    unsafe { asm!("isb", options(nomem, nostack)) };
     ARMED.store(false, Ordering::Release);
     DISARMS.fetch_add(1, Ordering::Relaxed);
 }
@@ -162,7 +190,9 @@ pub fn resolution_ns() -> u64 {
 /// Print the negotiated timer information.
 pub fn report() {
     println!(
-        "Timer: CNTV one-shot, {} Hz counter, {} ns resolution",
+        "Timer: {:?} one-shot PPI {}, {} Hz counter, {} ns resolution",
+        crate::arch::aarch64::gic::timer_kind(),
+        crate::arch::aarch64::gic::timer_irq(),
         frequency(),
         resolution_ns()
     );

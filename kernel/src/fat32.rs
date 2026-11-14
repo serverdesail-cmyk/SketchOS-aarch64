@@ -1,284 +1,312 @@
-//! FAT32 read/write filesystem (milestone 0.0.7).
+//! Read-only FAT32 volume reader for the current block-device prototype.
+//!
+//! Writes are deliberately disabled until journaling/metadata ordering and the
+//! block-device DMA/cache contract are implemented.
 
-use crate::phys;
-use crate::storage::{self, BlockDevice, SECTOR_SIZE};
+use crate::storage::{self, SECTOR_SIZE};
+
+const FAT32_EOC: u32 = 0x0fff_fff8;
+const FAT32_BAD: u32 = 0x0fff_fff7;
 
 pub struct Fat32 {
-    part_lba: u64,
+    partition_lba: u64,
+    total_sectors: u64,
     sectors_per_cluster: u32,
-    num_fats: u32,
-    fat_size_sectors: u32,
-    root_cluster: u32,
-    data_start_lba: u64,
     fat_start_lba: u64,
-    _sector_buf: *mut u8,
-}
-
-static mut FS: Option<Fat32> = None;
-
-pub fn fs() -> Option<&'static mut Fat32> {
-    unsafe { FS.as_mut() }
+    fat_size_sectors: u32,
+    data_start_lba: u64,
+    root_cluster: u32,
+    cluster_count: u32,
 }
 
 impl Fat32 {
-    pub fn mount() -> Result<(), &'static str> {
-        let dev = storage::device().ok_or("no block device")?;
-        let _buf_phys = phys::alloc_pages(1, 4096).ok_or("oom")?;
-
+    pub fn mount() -> Result<Self, &'static str> {
+        let capacity = storage::capacity_sectors().ok_or("no block device")?;
         let mut sector0 = [0u8; SECTOR_SIZE];
-        dev.read(0, &mut sector0).map_err(|_| "read sector 0")?;
+        storage::read_sector(0, &mut sector0).map_err(|_| "read MBR")?;
 
-        let part_lba: u64 = if sector0[510] == 0x55 && sector0[511] == 0xAA {
-            let lba = u32::from_le_bytes([sector0[0x1BE + 8], sector0[0x1BE + 9], sector0[0x1BE + 10], sector0[0x1BE + 11]]);
-            if lba == 0 { 0 } else { lba as u64 }
+        let partition_lba = if sector0[510] == 0x55 && sector0[511] == 0xaa {
+            let start = u32::from_le_bytes([
+                sector0[0x1be + 8],
+                sector0[0x1be + 9],
+                sector0[0x1be + 10],
+                sector0[0x1be + 11],
+            ]) as u64;
+            start
         } else {
             0
         };
+        if partition_lba >= capacity {
+            return Err("partition starts beyond block device");
+        }
 
         let mut bpb = [0u8; SECTOR_SIZE];
-        dev.read(part_lba, &mut bpb).map_err(|_| "read bpb")?;
-
-        let bytes_per_sector = u16::from_le_bytes([bpb[0x0B], bpb[0x0C]]) as u32;
-        if bytes_per_sector != 512 {
-            return Err("unsupported sector size");
+        storage::read_sector(partition_lba, &mut bpb).map_err(|_| "read BPB")?;
+        if bpb[510] != 0x55 || bpb[511] != 0xaa {
+            return Err("invalid FAT boot-sector signature");
         }
-        let sectors_per_cluster = bpb[0x0D] as u32;
-        let reserved_sectors = u16::from_le_bytes([bpb[0x0E], bpb[0x0F]]) as u32;
+
+        let bytes_per_sector = u16::from_le_bytes([bpb[0x0b], bpb[0x0c]]) as u32;
+        let sectors_per_cluster = bpb[0x0d] as u32;
+        let reserved_sectors = u16::from_le_bytes([bpb[0x0e], bpb[0x0f]]) as u32;
         let num_fats = bpb[0x10] as u32;
-        let fat_size_16 = u16::from_le_bytes([bpb[0x16], bpb[0x17]]) as u32;
-        let fat_size_32 = u32::from_le_bytes([bpb[0x24], bpb[0x25], bpb[0x26], bpb[0x27]]);
-        let root_cluster = u32::from_le_bytes([bpb[0x2C], bpb[0x2D], bpb[0x2E], bpb[0x2F]]);
+        let total16 = u16::from_le_bytes([bpb[0x13], bpb[0x14]]) as u64;
+        let fat_size16 = u16::from_le_bytes([bpb[0x16], bpb[0x17]]) as u32;
+        let total32 = u32::from_le_bytes([bpb[0x20], bpb[0x21], bpb[0x22], bpb[0x23]]) as u64;
+        let fat_size32 = u32::from_le_bytes([bpb[0x24], bpb[0x25], bpb[0x26], bpb[0x27]]);
+        let root_cluster = u32::from_le_bytes([bpb[0x2c], bpb[0x2d], bpb[0x2e], bpb[0x2f]]);
 
-        let fat_size_sectors = if fat_size_32 != 0 { fat_size_32 } else { fat_size_16 };
-        if fat_size_sectors == 0 {
-            return Err("not fat32");
+        if bytes_per_sector != SECTOR_SIZE as u32 {
+            return Err("unsupported bytes per sector");
+        }
+        if sectors_per_cluster == 0
+            || sectors_per_cluster > 128
+            || !sectors_per_cluster.is_power_of_two()
+        {
+            return Err("invalid sectors per cluster");
+        }
+        if reserved_sectors == 0 || num_fats == 0 || num_fats > 2 {
+            return Err("invalid FAT layout");
         }
 
-        let fat_start_lba = part_lba + reserved_sectors as u64;
-        let data_start_lba = fat_start_lba + (num_fats * fat_size_sectors) as u64;
+        let total_sectors = if total32 != 0 { total32 } else { total16 };
+        let fat_size_sectors = if fat_size32 != 0 { fat_size32 } else { fat_size16 };
+        if total_sectors == 0 || fat_size_sectors == 0 {
+            return Err("not a FAT32 volume");
+        }
+        let volume_end = partition_lba
+            .checked_add(total_sectors)
+            .ok_or("volume size overflow")?;
+        if volume_end > capacity {
+            return Err("FAT volume exceeds block device");
+        }
 
-        let fs = Fat32 {
-            part_lba,
+        let fat_start_lba = partition_lba
+            .checked_add(reserved_sectors as u64)
+            .ok_or("FAT start overflow")?;
+        let all_fats_sectors = (num_fats as u64)
+            .checked_mul(fat_size_sectors as u64)
+            .ok_or("FAT size overflow")?;
+        let data_start_lba = fat_start_lba
+            .checked_add(all_fats_sectors)
+            .ok_or("data start overflow")?;
+        if data_start_lba >= volume_end {
+            return Err("FAT metadata consumes the entire volume");
+        }
+
+        let data_sectors = volume_end - data_start_lba;
+        let cluster_count_64 = data_sectors / sectors_per_cluster as u64;
+        if cluster_count_64 == 0 || cluster_count_64 > 0x0fff_ffef {
+            return Err("FAT32 cluster count is outside the supported range");
+        }
+        let cluster_count = cluster_count_64 as u32;
+        if root_cluster < 2 || root_cluster - 2 >= cluster_count {
+            return Err("root cluster is outside the data region");
+        }
+
+        Ok(Self {
+            partition_lba,
+            total_sectors,
             sectors_per_cluster,
-            num_fats,
-            fat_size_sectors,
-            root_cluster,
-            data_start_lba,
             fat_start_lba,
-            _sector_buf: core::ptr::null_mut(),
-        };
-        unsafe { FS = Some(fs); }
-        Ok(())
+            fat_size_sectors,
+            data_start_lba,
+            root_cluster,
+            cluster_count,
+        })
     }
 
-    fn cluster_to_lba(&self, cluster: u32) -> u64 {
-        self.data_start_lba + (cluster as u64 - 2) * self.sectors_per_cluster as u64
+    fn cluster_to_lba(&self, cluster: u32) -> Result<u64, &'static str> {
+        if cluster < 2 || cluster - 2 >= self.cluster_count {
+            return Err("cluster outside data region");
+        }
+        let offset = (cluster as u64 - 2)
+            .checked_mul(self.sectors_per_cluster as u64)
+            .ok_or("cluster offset overflow")?;
+        let lba = self.data_start_lba.checked_add(offset).ok_or("cluster LBA overflow")?;
+        let end = lba
+            .checked_add(self.sectors_per_cluster as u64)
+            .ok_or("cluster end overflow")?;
+        let volume_end = self.partition_lba + self.total_sectors;
+        if end > volume_end {
+            return Err("cluster exceeds volume");
+        }
+        Ok(lba)
     }
 
-    fn read_fat_entry(&self, cluster: u32) -> u32 {
-        let dev = storage::device().unwrap();
-        let fat_offset = cluster * 4;
-        let fat_sector = self.fat_start_lba + (fat_offset / 512) as u64;
-        let off = (fat_offset % 512) as usize;
-        let mut sec = [0u8; SECTOR_SIZE];
-        let _ = dev.read(fat_sector, &mut sec);
-        let val = u32::from_le_bytes([sec[off], sec[off + 1], sec[off + 2], sec[off + 3]]);
-        val & 0x0FFF_FFFF
+    fn read_fat_entry(&self, cluster: u32) -> Result<u32, &'static str> {
+        let fat_offset = cluster.checked_mul(4).ok_or("FAT offset overflow")?;
+        let fat_sector_offset = (fat_offset / SECTOR_SIZE as u32) as u64;
+        if fat_sector_offset >= self.fat_size_sectors as u64 {
+            return Err("FAT entry outside FAT");
+        }
+        let lba = self.fat_start_lba + fat_sector_offset;
+        let offset = (fat_offset % SECTOR_SIZE as u32) as usize;
+        let mut sector = [0u8; SECTOR_SIZE];
+        storage::read_sector(lba, &mut sector).map_err(|_| "read FAT sector")?;
+        Ok(u32::from_le_bytes([
+            sector[offset],
+            sector[offset + 1],
+            sector[offset + 2],
+            sector[offset + 3],
+        ]) & 0x0fff_ffff)
     }
 
-    pub fn list_root(&self) {
-        let dev = storage::device().unwrap();
-        let spc = self.sectors_per_cluster;
-        let mut buf = [0u8; SECTOR_SIZE];
+    fn next_cluster(&self, cluster: u32) -> Result<Option<u32>, &'static str> {
+        let next = self.read_fat_entry(cluster)?;
+        if next >= FAT32_EOC {
+            Ok(None)
+        } else if next == FAT32_BAD || next < 2 || next - 2 >= self.cluster_count {
+            Err("invalid FAT cluster chain")
+        } else {
+            Ok(Some(next))
+        }
+    }
+
+    pub fn list_root(&self) -> Result<(), &'static str> {
         let mut cluster = self.root_cluster;
-        while cluster < 0x0FFF_FFF8 {
-            for s in 0..spc {
-                let lba = self.cluster_to_lba(cluster) + s as u64;
-                if dev.read(lba, &mut buf).is_err() { return; }
-                for i in 0..16 {
-                    let off = i * 32;
-                    let first = buf[off];
-                    if first == 0 { return; }
-                    if first == 0xE5 { continue; }
-                    let attr = buf[off + 0x0B];
-                    if attr == 0x0F { continue; }
-                    if attr & 0x08 != 0 { continue; }
-                    let mut name = [0u8; 13];
-                    let mut ni = 0usize;
-                    for j in 0..8 {
-                        let c = buf[off + j];
-                        if c == b' ' { break; }
-                        name[ni] = c; ni += 1;
+        let mut steps = 0u32;
+        let mut sector = [0u8; SECTOR_SIZE];
+
+        while steps < self.cluster_count {
+            let first_lba = self.cluster_to_lba(cluster)?;
+            for index in 0..self.sectors_per_cluster {
+                storage::read_sector(first_lba + index as u64, &mut sector)
+                    .map_err(|_| "read root directory")?;
+                for entry in sector.chunks_exact(32) {
+                    if entry[0] == 0 {
+                        return Ok(());
                     }
-                    let mut has_ext = false;
-                    for j in 0..3 { if buf[off + 8 + j] != b' ' { has_ext = true; break; } }
-                    if has_ext {
-                        name[ni] = b'.'; ni += 1;
-                        for j in 0..3 {
-                            let c = buf[off + 8 + j];
-                            if c == b' ' { break; }
-                            name[ni] = c; ni += 1;
-                        }
+                    if entry[0] == 0xe5 || entry[0x0b] == 0x0f || entry[0x0b] & 0x08 != 0 {
+                        continue;
                     }
-                    let name_str = core::str::from_utf8(&name[..ni]).unwrap_or("?");
-                    let size = u32::from_le_bytes([buf[off + 0x1C], buf[off + 0x1D], buf[off + 0x1E], buf[off + 0x1F]]);
-                    let is_dir = attr & 0x10 != 0;
-                    crate::println!("  {}  {} bytes{}", name_str, size, if is_dir { "  <dir>" } else { "" });
+                    let (name, name_len) = short_name(entry);
+                    let name = core::str::from_utf8(&name[..name_len]).unwrap_or("?");
+                    let size = u32::from_le_bytes([entry[0x1c], entry[0x1d], entry[0x1e], entry[0x1f]]);
+                    let is_dir = entry[0x0b] & 0x10 != 0;
+                    crate::println!(
+                        "  {}  {} bytes{}",
+                        name,
+                        size,
+                        if is_dir { "  <dir>" } else { "" }
+                    );
                 }
             }
-            cluster = self.read_fat_entry(cluster);
+            match self.next_cluster(cluster)? {
+                Some(next) => cluster = next,
+                None => return Ok(()),
+            }
+            steps += 1;
         }
+        Err("root directory chain exceeded cluster count")
     }
 
-    pub fn read_file(&self, name: &str, buf: &mut [u8]) -> Result<usize, &'static str> {
-        let dev = storage::device().unwrap();
-        let mut sec = [0u8; SECTOR_SIZE];
-        let mut found_cluster: u32 = 0;
-        let mut found_size: u32 = 0;
-        let mut found = false;
+    /// Read a short-name file from the root directory. Returns the bytes copied;
+    /// if the caller's buffer is smaller than the file, the result is truncated.
+    pub fn read_file(&self, name: &str, buffer: &mut [u8]) -> Result<usize, &'static str> {
+        let wanted = encode_short_name(name)?;
         let mut cluster = self.root_cluster;
-        let spc = self.sectors_per_cluster;
-        while cluster < 0x0FFF_FFF8 && !found {
-            for s in 0..spc {
-                let lba = self.cluster_to_lba(cluster) + s as u64;
-                if dev.read(lba, &mut sec).is_err() { return Err("io"); }
-                for i in 0..16 {
-                    let off = i * 32;
-                    if sec[off] == 0 { return Err("not found"); }
-                    if sec[off] == 0xE5 { continue; }
-                    if sec[off + 0x0B] == 0x0F { continue; }
-                    let mut nm = [0u8; 13];
-                    let mut ni = 0;
-                    for j in 0..8 { let c = sec[off + j]; if c == b' ' { break; } nm[ni] = c; ni += 1; }
-                    let mut has_ext = false;
-                    for j in 0..3 { if sec[off + 8 + j] != b' ' { has_ext = true; break; } }
-                    if has_ext { nm[ni] = b'.'; ni += 1; for j in 0..3 { let c = sec[off + 8 + j]; if c == b' ' { break; } nm[ni] = c; ni += 1; } }
-                    if let Ok(n) = core::str::from_utf8(&nm[..ni]) {
-                        if n.eq_ignore_ascii_case(name) {
-                            found_size = u32::from_le_bytes([sec[off + 0x1C], sec[off + 0x1D], sec[off + 0x1E], sec[off + 0x1F]]);
-                            let hi = u16::from_le_bytes([sec[off + 0x14], sec[off + 0x15]]) as u32;
-                            let lo = u16::from_le_bytes([sec[off + 0x1A], sec[off + 0x1B]]) as u32;
-                            found_cluster = (hi << 16) | lo;
-                            found = true;
-                            break;
-                        }
+        let mut steps = 0u32;
+        let mut sector = [0u8; SECTOR_SIZE];
+        let mut file_cluster = None;
+        let mut file_size = 0u32;
+
+        'search: while steps < self.cluster_count {
+            let first_lba = self.cluster_to_lba(cluster)?;
+            for index in 0..self.sectors_per_cluster {
+                storage::read_sector(first_lba + index as u64, &mut sector)
+                    .map_err(|_| "read root directory")?;
+                for entry in sector.chunks_exact(32) {
+                    if entry[0] == 0 {
+                        break 'search;
                     }
-                }
-                if found { break; }
-            }
-            if !found { cluster = self.read_fat_entry(cluster); }
-        }
-        if !found { return Err("not found"); }
-
-        let mut remaining = found_size as usize;
-        let mut written = 0usize;
-        let mut cl = found_cluster;
-        let spc = self.sectors_per_cluster;
-        while remaining > 0 && cl < 0x0FFF_FFF8 {
-            for s in 0..spc {
-                if remaining == 0 { break; }
-                let lba = self.cluster_to_lba(cl) + s as u64;
-                if dev.read(lba, &mut sec).is_err() { return Err("io"); }
-                let take = remaining.min(SECTOR_SIZE);
-                if written + take <= buf.len() {
-                    buf[written..written + take].copy_from_slice(&sec[..take]);
-                }
-                written += take;
-                remaining = remaining.saturating_sub(take);
-            }
-            cl = self.read_fat_entry(cl);
-        }
-        Ok(written.min(buf.len()))
-    }
-
-    pub fn write_file(&self, name: &str, data: &[u8]) -> Result<(), &'static str> {
-        let bytes_per_cluster = self.sectors_per_cluster as usize * SECTOR_SIZE;
-        let clusters_needed = (data.len() + bytes_per_cluster - 1) / bytes_per_cluster.max(1);
-        let clusters_needed = clusters_needed.max(1);
-
-        let mut allocated = [0u32; 64];
-        let mut nalloc = 0usize;
-        let mut c = 2u32;
-        while nalloc < clusters_needed {
-            if self.read_fat_entry(c) == 0 {
-                allocated[nalloc] = c;
-                nalloc += 1;
-            }
-            c += 1;
-            if c > 0x0FFF_FFEF { return Err("no free clusters"); }
-        }
-
-        for i in 0..nalloc {
-            let next = if i + 1 < nalloc { allocated[i + 1] } else { 0x0FFF_FFFF };
-            self.write_fat_entry(allocated[i], next);
-        }
-
-        let dev = storage::device().unwrap();
-        let mut off = 0usize;
-        for i in 0..nalloc {
-            for s in 0..self.sectors_per_cluster {
-                if off >= data.len() { break; }
-                let mut sec = [0u8; SECTOR_SIZE];
-                let take = (data.len() - off).min(SECTOR_SIZE);
-                sec[..take].copy_from_slice(&data[off..off + take]);
-                let lba = self.cluster_to_lba(allocated[i]) + s as u64;
-                dev.write(lba, &sec).map_err(|_| "write data")?;
-                off += take;
-            }
-        }
-
-        let mut sec = [0u8; SECTOR_SIZE];
-        let mut cluster = self.root_cluster;
-        let spc = self.sectors_per_cluster;
-        'outer: while cluster < 0x0FFF_FFF8 {
-            for s in 0..spc {
-                let lba = self.cluster_to_lba(cluster) + s as u64;
-                if dev.read(lba, &mut sec).is_err() { return Err("io"); }
-                for i in 0..16 {
-                    let o = i * 32;
-                    if sec[o] == 0 || sec[o] == 0xE5 {
-                        let mut entry = [0u8; 32];
-                        let name_bytes = name.as_bytes();
-                        let (base, ext) = split_name(name_bytes);
-                        for j in 0..8 { entry[j] = if j < base.len() { base[j] } else { b' ' }; }
-                        for j in 0..3 { entry[8 + j] = if j < ext.len() { ext[j] } else { b' ' }; }
-                        entry[0x0B] = 0x20;
-                        let hi = (allocated[0] >> 16) as u16;
-                        let lo = (allocated[0] & 0xFFFF) as u16;
-                        entry[0x14..0x16].copy_from_slice(&hi.to_le_bytes());
-                        entry[0x1A..0x1C].copy_from_slice(&lo.to_le_bytes());
-                        let size = data.len() as u32;
-                        entry[0x1C..0x20].copy_from_slice(&size.to_le_bytes());
-                        sec[o..o + 32].copy_from_slice(&entry);
-                        dev.write(lba, &sec).map_err(|_| "write dir")?;
-                        break 'outer;
+                    if entry[0] == 0xe5 || entry[0x0b] == 0x0f || entry[0x0b] & 0x08 != 0 {
+                        continue;
+                    }
+                    if entry[..11] == wanted {
+                        let high = u16::from_le_bytes([entry[0x14], entry[0x15]]) as u32;
+                        let low = u16::from_le_bytes([entry[0x1a], entry[0x1b]]) as u32;
+                        file_cluster = Some((high << 16) | low);
+                        file_size = u32::from_le_bytes([entry[0x1c], entry[0x1d], entry[0x1e], entry[0x1f]]);
+                        break 'search;
                     }
                 }
             }
-            cluster = self.read_fat_entry(cluster);
+            match self.next_cluster(cluster)? {
+                Some(next) => cluster = next,
+                None => break,
+            }
+            steps += 1;
         }
-        Ok(())
-    }
 
-    fn write_fat_entry(&self, cluster: u32, value: u32) {
-        let dev = storage::device().unwrap();
-        let fat_offset = cluster * 4;
-        let fat_sector = self.fat_start_lba + (fat_offset / 512) as u64;
-        let off = (fat_offset % 512) as usize;
-        let mut sec = [0u8; SECTOR_SIZE];
-        let _ = dev.read(fat_sector, &mut sec);
-        sec[off..off + 4].copy_from_slice(&value.to_le_bytes());
-        let _ = dev.write(fat_sector, &sec);
+        let mut cluster = file_cluster.ok_or("file not found")?;
+        let mut remaining = (file_size as usize).min(buffer.len());
+        let mut copied = 0usize;
+        let mut chain_steps = 0u32;
+
+        while remaining > 0 && chain_steps < self.cluster_count {
+            let first_lba = self.cluster_to_lba(cluster)?;
+            for index in 0..self.sectors_per_cluster {
+                if remaining == 0 {
+                    break;
+                }
+                storage::read_sector(first_lba + index as u64, &mut sector)
+                    .map_err(|_| "read file data")?;
+                let count = remaining.min(SECTOR_SIZE);
+                buffer[copied..copied + count].copy_from_slice(&sector[..count]);
+                copied += count;
+                remaining -= count;
+            }
+            if remaining == 0 {
+                break;
+            }
+            cluster = self.next_cluster(cluster)?.ok_or("file chain ended early")?;
+            chain_steps += 1;
+        }
+
+        if remaining != 0 {
+            return Err("file chain exceeded cluster count");
+        }
+        Ok(copied)
     }
 }
 
-fn split_name(name: &[u8]) -> (&[u8], &[u8]) {
-    let mut dot = None;
-    for (i, &c) in name.iter().enumerate() {
-        if c == b'.' { dot = Some(i); }
+fn short_name(entry: &[u8]) -> ([u8; 13], usize) {
+    let mut output = [0u8; 13];
+    let mut length = 0usize;
+    for &byte in &entry[..8] {
+        if byte == b' ' { break; }
+        output[length] = byte;
+        length += 1;
     }
-    match dot {
-        Some(i) => (&name[..i], &name[i + 1..]),
-        None => (name, &name[name.len()..]),
+    if entry[8..11].iter().any(|&byte| byte != b' ') {
+        output[length] = b'.';
+        length += 1;
+        for &byte in &entry[8..11] {
+            if byte == b' ' { break; }
+            output[length] = byte;
+            length += 1;
+        }
     }
+    (output, length)
+}
+
+fn encode_short_name(name: &str) -> Result<[u8; 11], &'static str> {
+    let bytes = name.as_bytes();
+    let dot = bytes.iter().position(|&byte| byte == b'.');
+    let (base, extension) = match dot {
+        Some(index) => (&bytes[..index], &bytes[index + 1..]),
+        None => (bytes, &[][..]),
+    };
+    if base.is_empty() || base.len() > 8 || extension.len() > 3 {
+        return Err("name is not 8.3 format");
+    }
+    let mut output = [b' '; 11];
+    for (index, byte) in base.iter().enumerate() {
+        output[index] = byte.to_ascii_uppercase();
+    }
+    for (index, byte) in extension.iter().enumerate() {
+        output[8 + index] = byte.to_ascii_uppercase();
+    }
+    Ok(output)
 }
