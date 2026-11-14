@@ -276,3 +276,14 @@ The source review found that several table decoders trusted firmware-declared of
 - SPCR/BGRT/TPM2 decoders did not all enforce their complete fixed payload lengths.
 
 **Status on this branch: hardened.** The reader bounds every firmware table range to the physmap; MADT checks the ACPI-defined minimum entry sizes; IORT uses the declared node count and minimum node header size; SPCR validates the GAS geometry and physical range, while BGRT/TPM2 require their fixed payload lengths. These changes are compile-validated, not a substitute for reviewing the actual laptop table contents.
+
+
+### P1 — Unsynchronized mutable globals in storage, filesystem, network and display scaffolding
+
+The previous implementation exposed references into `static mut` globals for the VirtIO block device, FAT32 filesystem, network device and DRM scaffold. Returning `&'static mut` from a global does not establish exclusive access and can create Rust aliasing undefined behavior when more than one caller exists.
+
+**Status on this branch: removed from the active scaffolding.**
+- Block-device state and network/display state now use the kernel IRQ spinlock.
+- Partition metadata is built locally and published under a lock instead of mutating global arrays without synchronization.
+- FAT32 mount now returns an owned, read-only volume object; the old global mutable filesystem reference and unimplemented write path are removed.
+- The experimental ext2 formatter is explicitly named as a QEMU test-disk formatter and refuses physical-hardware use.
