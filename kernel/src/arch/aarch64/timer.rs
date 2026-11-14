@@ -15,9 +15,9 @@ use crate::println;
 /// would keep the level-sensitive PPI asserted and storm the core.
 pub const MIN_EVENT_NS: u64 = 100_000;
 
-/// `cntv_ctl_el0`: interrupt masked (timer still counts).
+/// Architectural timer control bit: interrupt masked, counter still counts.
 const TIMER_CTL_IMASK: u64 = 1 << 1;
-/// `cntv_ctl_el0`: timer enabled, interrupt unmasked.
+/// Architectural timer control bit: timer enabled, interrupt unmasked.
 const TIMER_CTL_ENABLE: u64 = 1 << 0;
 
 static READY: AtomicBool = AtomicBool::new(false);
@@ -84,8 +84,8 @@ fn ns_per_tick() -> u64 {
     }
 }
 
-/// Start the timer in a disarmed state. Every core programs its own
-/// `CNTV_*_EL0` registers; the boot core's counter frequency is shared.
+/// Start the selected timer in a disarmed state. Every core programs its own
+/// system-register timer; the architectural counter frequency is shared.
 pub fn init() -> Result<(), &'static str> {
     let frequency = counter_frequency();
     if frequency == 0 {
