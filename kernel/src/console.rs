@@ -83,6 +83,26 @@ pub fn init(base: u64) {
     }
 
     UART_BASE.store(base, Ordering::Relaxed);
+
+    let divisor = PL011_CLOCK_HZ / (16 * BAUD_115200);
+    let remainder = PL011_CLOCK_HZ % (16 * BAUD_115200);
+    let fractional = (remainder * 64 + (16 * BAUD_115200) / 2) / (16 * BAUD_115200);
+
+    // SAFETY: `base` came from a firmware description of a PL011.
+    unsafe {
+        mmio_write(base, UART_CR, 0);
+        let mut spins = 0u32;
+        while mmio_read(base, UART_FR) & FR_BUSY != 0 && spins < 1_000_000 {
+            spins += 1;
+        }
+        mmio_write(base, UART_ICR, 0x7ff);
+        mmio_write(base, UART_IBRD, divisor as u32);
+        mmio_write(base, UART_FBRD, fractional as u32);
+        mmio_write(base, UART_LCR_H, LCR_H_FEN | LCR_H_WLEN_8);
+        // No interrupts: polling output only.
+        mmio_write(base, UART_IMSC, 0);
+        mmio_write(base, UART_CR, CR_UARTEN | CR_TXE | CR_RXE);
+    }
 }
 
 /// Enable a firmware-configured Qualcomm GENI UART for bounded polling output.
@@ -112,27 +132,6 @@ pub fn init_geni(base: u64) -> Result<(), &'static str> {
 
     GENI_BASE.store(base, Ordering::Release);
     Ok(())
-}
-
-    let divisor = PL011_CLOCK_HZ / (16 * BAUD_115200);
-    let remainder = PL011_CLOCK_HZ % (16 * BAUD_115200);
-    let fractional = (remainder * 64 + (16 * BAUD_115200) / 2) / (16 * BAUD_115200);
-
-    // SAFETY: `base` came from a firmware description of a PL011.
-    unsafe {
-        mmio_write(base, UART_CR, 0);
-        let mut spins = 0u32;
-        while mmio_read(base, UART_FR) & FR_BUSY != 0 && spins < 1_000_000 {
-            spins += 1;
-        }
-        mmio_write(base, UART_ICR, 0x7ff);
-        mmio_write(base, UART_IBRD, divisor as u32);
-        mmio_write(base, UART_FBRD, fractional as u32);
-        mmio_write(base, UART_LCR_H, LCR_H_FEN | LCR_H_WLEN_8);
-        // No interrupts: polling output only.
-        mmio_write(base, UART_IMSC, 0);
-        mmio_write(base, UART_CR, CR_UARTEN | CR_TXE | CR_RXE);
-    }
 }
 
 /// Activate the GOP framebuffer text console. The UART, if present, remains
