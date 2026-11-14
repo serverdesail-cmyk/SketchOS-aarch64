@@ -3,6 +3,7 @@
 use core::sync::atomic::Ordering;
 
 use crate::println;
+use crate::sync::IrqSpinLock;
 use sketchos_bootinfo::{phys_to_virt, PHYSMAP_BASE};
 
 pub const SECTOR_SIZE: usize = 512;
@@ -14,14 +15,28 @@ pub trait BlockDevice {
     fn name(&self) -> &'static str;
 }
 
-static mut DEVICE: Option<VirtioMmioBlock> = None;
+static DEVICE: IrqSpinLock<Option<VirtioMmioBlock>> = IrqSpinLock::new(None);
 
 pub fn register(dev: VirtioMmioBlock) {
-    unsafe { DEVICE = Some(dev); }
+    *DEVICE.lock() = Some(dev);
 }
 
-pub fn device() -> Option<&'static VirtioMmioBlock> {
-    unsafe { DEVICE.as_ref() }
+pub fn capacity_sectors() -> Option<u64> {
+    DEVICE.lock().as_ref().map(BlockDevice::capacity_sectors)
+}
+
+pub fn device_name() -> Option<&'static str> {
+    DEVICE.lock().as_ref().map(BlockDevice::name)
+}
+
+pub fn report() {
+    if let Some(name) = device_name() {
+        if let Some(capacity) = capacity_sectors() {
+            println!("Storage: {} ({} sectors)", name, capacity);
+        }
+    } else {
+        println!("Storage: no block device");
+    }
 }
 
 pub mod virtio {
@@ -296,11 +311,13 @@ pub fn probe_qemu_virtio_mmio() {
 }
 
 pub fn read_sector(lba: u64, buf: &mut [u8]) -> Result<(), &'static str> {
-    let dev = device().ok_or("no block device")?;
+    let guard = DEVICE.lock();
+    let dev = guard.as_ref().ok_or("no block device")?;
     dev.read(lba, buf)
 }
 
 pub fn write_sector(lba: u64, buf: &[u8]) -> Result<(), &'static str> {
-    let dev = device().ok_or("no block device")?;
+    let guard = DEVICE.lock();
+    let dev = guard.as_ref().ok_or("no block device")?;
     dev.write(lba, buf)
 }
