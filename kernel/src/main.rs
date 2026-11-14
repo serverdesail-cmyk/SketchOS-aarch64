@@ -79,14 +79,11 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
     // Initialize it before ACPI discovery and before replacing the page tables,
     // so failures in either stage remain visible on hardware without PL011.
     let mut framebuffer_console = false;
+    let mut framebuffer_error = None;
     if info.has_flag(FLAG_FRAMEBUFFER) {
         match console::init_framebuffer(&info.framebuffer) {
             Ok(()) => framebuffer_console = console::framebuffer_active(),
-            Err(reason) => {
-                // This may be invisible if the platform has no usable UART.
-                // The loader's handoff marker remains as the last-resort clue.
-                println!("Early framebuffer console unavailable: {}", reason);
-            }
+            Err(reason) => framebuffer_error = Some(reason),
         }
     }
 
@@ -98,6 +95,9 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
             Ok(()) => println!("GENI UART: firmware protocol verified; polling console active"),
             Err(reason) => println!("GENI UART unavailable: {}", reason),
         }
+    }
+    if let Some(reason) = framebuffer_error {
+        println!("Early framebuffer console unavailable: {}", reason);
     }
 
     println!();
