@@ -215,7 +215,9 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
             "Debug UART: {} @ 0x{:016x}{}",
             uart_kind::name(info.uart_kind),
             info.uart_base,
-            if info.uart_kind == uart_kind::PL011 {
+            if info.uart_kind == uart_kind::PL011
+                || info.uart_kind == uart_kind::SDM845_GENI
+            {
                 ""
             } else {
                 " (driver not implemented yet)"
