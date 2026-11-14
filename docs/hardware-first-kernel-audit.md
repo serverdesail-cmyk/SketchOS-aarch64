@@ -265,3 +265,14 @@ On the laptop, those reads can hit an unpowered or unmapped MMIO region and caus
 - ECAM reads use the kernel's single-core, fault-contained 8/16/32-bit probe helpers.
 - A window whose first configuration read aborts is skipped rather than repeatedly faulted.
 - These probes are still inventory-only and read-only; PCI bus mastering remains disabled until SMMU/DMA support exists.
+
+
+### P1 — ACPI parsers needed stronger bounds and structure validation
+
+The source review found that several table decoders trusted firmware-declared offsets more than necessary:
+- The kernel's raw ACPI reader did not ensure each table/RSDP range fit inside the current 512 GiB physmap before constructing a slice.
+- MADT decoding checked the enclosing table bounds but did not check each known entry's minimum structure length before reading GICC/GICD/GICR/ITS fields.
+- IORT node counting scanned to the end of the table rather than honoring the declared node count, and accepted undersized node headers.
+- SPCR/BGRT/TPM2 decoders did not all enforce their complete fixed payload lengths.
+
+**Status on this branch: hardened.** The reader bounds every firmware table range to the physmap; MADT checks the ACPI-defined minimum entry sizes; IORT uses the declared node count and minimum node header size; SPCR validates the GAS geometry and physical range, while BGRT/TPM2 require their fixed payload lengths. These changes are compile-validated, not a substitute for reviewing the actual laptop table contents.
