@@ -95,7 +95,11 @@ impl Fat32 {
         }
 
         let data_sectors = volume_end - data_start_lba;
-        let cluster_count = (data_sectors / sectors_per_cluster as u64) as u32;
+        let cluster_count_64 = data_sectors / sectors_per_cluster as u64;
+        if cluster_count_64 == 0 || cluster_count_64 > 0x0fff_ffef {
+            return Err("FAT32 cluster count is outside the supported range");
+        }
+        let cluster_count = cluster_count_64 as u32;
         if root_cluster < 2 || root_cluster - 2 >= cluster_count {
             return Err("root cluster is outside the data region");
         }
