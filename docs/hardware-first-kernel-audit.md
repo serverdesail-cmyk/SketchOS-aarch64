@@ -21,9 +21,8 @@ The first job is to make the kernel entry and early diagnostics deterministic. O
 
 **Evidence in source**
 - `kernel/src/main.rs::kmain` validates BootInfo before initializing any console. On validation failure it immediately calls `arch::halt()`.
-- The only UART path initialized by `kmain` is PL011.
-- The framebuffer console is initialized only after ACPI discovery and the kernel MMU setup.
-- The laptop firmware inventory records SPCR interface type `0x13` at `0x894000`. ACPI defines `0x13` as the SDM845 UART interface with a 7.372 MHz clock; Qualcomm's GENI Serial Engine UART is the matching hardware family. The current loader collapses this to `uart_kind::OTHER`, and SketchOS has no GENI console driver. The exact clock/power/firmware state on this X1P platform still needs confirmation.
+- The original path only initialized PL011 and brought up the framebuffer after ACPI/MMU. The hardware branch now initializes the GOP console before ACPI/MMU and has an output-only GENI path for SPCR type `0x13`.
+- The laptop firmware inventory records SPCR interface type `0x13` at `0x894000`. ACPI defines `0x13` as the SDM845 UART interface with a 7.372 MHz clock; Qualcomm's GENI Serial Engine UART is the matching hardware family. The loader now preserves that classification. The GENI path checks the UART protocol and refuses DMA mode, but its actual X1P clock/power/firmware state remains unverified.
 - The early white/green framebuffer markers in `boot.S` are useful, but they depend on the GOP framebuffer description and its mapping being valid.
 
 **Impact**
@@ -33,7 +32,7 @@ A fault during BootInfo validation, ACPI discovery, MMU replacement, or before f
 1. Add a minimal, bounds-checked early GOP framebuffer writer that is usable before ACPI and before the final MMU map.
 2. Preserve the last boot stage and exception syndrome in a reserved BootInfo/diagnostic page.
 3. Add a panic/exception path that writes a compact status code to the framebuffer without depending on heap, scheduler, ACPI AML or interrupts.
-4. Preserve the raw SPCR interface type, GAS access width, GSIV, clock frequency and namespace string in the handoff/platform data. Implement a bounded, polled Qualcomm GENI UART early console for interface `0x13`, using the SPCR base and baud settings. First verify the GENI firmware/protocol status and that firmware left the QUP clocks and power domain active; do not reset or reconfigure a live engine blindly. Never treat this interface as PL011.
+4. **Partially implemented:** the loader now maps SPCR type `0x13` to `SDM845_GENI`; the kernel verifies GENI UART protocol and FIFO mode, then uses bounded polling TX without touching firmware clock/baud settings. Remaining work: parse/validate the complete SPCR GAS, confirm the X1P QUP clock/power state, and test the console on the laptop. Never treat this interface as PL011.
 
 
 
@@ -58,11 +57,7 @@ Build a tiny *output-only* early console first. It should validate the SPCR GAS 
 **Impact**
 If firmware omits the virtual timer GSIV but supplies the physical timer GSIV, SketchOS can enable the physical timer PPI while programming the virtual timer. The timer then never delivers the interrupt expected by the scheduler. QEMU may not expose this because its GTDT fields differ from the laptop's.
 
-**Required change**
-Make the timer source and interrupt ID one explicit matched pair:
-- either require a valid virtual EL1 GSIV and use CNTV registers;
-- or select the physical EL1 GSIV and use CNTP registers.
-Do not silently pair a physical PPI with CNTV registers. Add host-side tests for each GTDT field combination.
+**Status on this branch: source pairing implemented, hardware not tested.** The GIC now selects `(TimerKind, GSIV)` together. Virtual EL1 selects CNTV registers; non-secure Physical EL1 selects CNTP registers. A present but unusable GTDT now fails initialization instead of silently choosing a mismatched fallback. The timer driver reads and programs the matching counter/control/compare registers. Add host-side tests for each GTDT field combination and validate the laptop's exact GSIV from its raw GTDT.
 
 ### P1 — SMMU/IOMMU and DMA ownership are not implemented
 
@@ -224,3 +219,16 @@ A synchronous exception while still executing at EL2 can enter this table, but t
 
 **Required change**
 Use a dedicated minimal EL2 early-fault vector that records `ESR_EL2`, `ELR_EL2`, `FAR_EL2` and parks, or implement a fully EL-aware save/restore path. Keep the general scheduler/context-switch vectors EL1-only and install them only after the kernel is running at EL1.
+
+
+## Changes already made on the hardware-first branch
+
+These are source changes, not hardware-support claims:
+
+- Framebuffer console initialization moved to immediately after BootInfo validation, before ACPI discovery and before the kernel replaces the loader page tables.
+- Framebuffer clear/scroll operations now use volatile 32-bit scanout accesses and an output barrier.
+- SPCR interface `0x13` is preserved as `SDM845_GENI`; a bounded, polling-only GENI TX path verifies UART protocol and refuses DMA mode. It does not load firmware, change clocks, change baud, or manage QUP power.
+- GIC timer selection now carries the selected source with its GSIV. CNTV and CNTP registers are used only with their corresponding GTDT interrupt field.
+- Added a separate `hardware-kernel-build.yml` workflow that builds the AArch64 kernel/UEFI ISO, runs host-side allocator/scheduler tests, checks changed Rust formatting and uploads an ISO **without running an emulator**.
+
+None of these changes has been tested on the HP laptop yet. The next static pass is to validate SPCR GAS details, review the GENI sequencer protocol against the Qualcomm/Linux sources, and audit every EL1/EL2 entry register against the UEFI and Arm contracts.
