@@ -99,7 +99,7 @@ pub fn init(info: &FramebufferInfo) -> Result<(), &'static str> {
 
 /// True when [`init`] succeeded.
 pub fn is_active() -> bool {
-    BASE.load(Ordering::Relaxed) != 0
+    BASE.load(Ordering::Acquire) != 0
 }
 
 /// Write one byte to the framebuffer. Ignored when the console is inactive.
@@ -207,14 +207,6 @@ fn clear_cell(cell_x: u32, cell_y: u32) {
         GLYPH_HEIGHT * SCALE,
         BACKGROUND,
     );
-}
-
-fn clear() {
-    let base = BASE.load(Ordering::Acquire);
-    let stride = STRIDE.load(Ordering::Relaxed);
-    let height = HEIGHT.load(Ordering::Relaxed);
-    let size = SIZE.load(Ordering::Relaxed);
-    clear_region(base, size, stride, height);
 }
 
 fn clear_region(base: u64, size: u64, stride: u32, height: u32) {
