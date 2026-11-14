@@ -67,41 +67,50 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
         }
     };
 
-    // Install the fault table before touching any device. A bad UART or
-    // framebuffer address then produces a diagnostic instead of a silent hang.
+    // Install the fault table before touching any device.
     let vectors = arch::aarch64::install_exception_vectors();
 
-    if info.has_flag(FLAG_UART) && info.uart_kind == uart_kind::PL011 {
-        console::init(info.uart_base);
-    }
-
-    let counter_frequency = arch::aarch64::counter_frequency();
-    let start_ticks = arch::aarch64::counter();
-
-    // Decode ACPI while the firmware identity map is still active. This reads
-    // only firmware tables in RAM and never touches a device.
-    let platform = acpi::discover(&info);
-
-    // Replace the firmware map with kernel-owned tables. A failure is not
-    // fatal: the kernel continues under the firmware map and reports why.
-    let mmu_result = arch::aarch64::mmu::init(&info, platform.as_ref());
-
-    // The framebuffer is initialized after the MMU so the console draws through
-    // the final Normal Non-cacheable mapping rather than the firmware's.
+    // The loader already mapped the GOP buffer in the bootstrap physical map.
+    // Initialize it before ACPI discovery and before replacing the page tables,
+    // so failures in either stage remain visible on hardware without PL011.
     let mut framebuffer_console = false;
     if info.has_flag(FLAG_FRAMEBUFFER) {
         match console::init_framebuffer(&info.framebuffer) {
             Ok(()) => framebuffer_console = console::framebuffer_active(),
             Err(reason) => {
-                // The UART may not exist on this machine, so this line can be
-                // invisible on real hardware. It is still useful under QEMU.
-                println!("Framebuffer console unavailable: {}", reason);
+                // This may be invisible if the platform has no usable UART.
+                // The loader's handoff marker remains as the last-resort clue.
+                println!("Early framebuffer console unavailable: {}", reason);
             }
         }
     }
 
+    if info.has_flag(FLAG_UART) && info.uart_kind == uart_kind::PL011 {
+        console::init(info.uart_base);
+    }
+
     println!();
     println!("SketchOS kernel 0.0.6 (AArch64)");
+    println!(
+        "Early entry: BootInfo valid, EL{} -> EL{}, framebuffer {}",
+        entry_el,
+        arch::aarch64::current_el(),
+        yes_no(framebuffer_console)
+    );
+
+    let counter_frequency = arch::aarch64::counter_frequency();
+    let start_ticks = arch::aarch64::counter();
+
+    // Decode ACPI while the loader's bootstrap map is still active. This reads
+    // firmware tables in RAM and does not initialize any device.
+    println!("ACPI: beginning table discovery");
+    let platform = acpi::discover(&info);
+
+    // Replace the firmware map with kernel-owned tables. A failure is not
+    // fatal: the kernel continues under the loader map and reports why.
+    println!("MMU: building kernel-owned translation tables");
+    let mmu_result = arch::aarch64::mmu::init(&info, platform.as_ref());
+
     println!(
         "Exceptions: VBAR_EL{} 0x{:016x}, table aligned: {}",
         arch::aarch64::current_el(),
