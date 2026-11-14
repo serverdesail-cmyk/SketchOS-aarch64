@@ -339,7 +339,13 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
             println!("Storage: QEMU VirtIO-MMIO probe skipped on physical hardware");
             println!("Net: QEMU VirtIO-MMIO probe skipped on physical hardware");
         }
-        drm::init();
+        if info.has_flag(FLAG_FRAMEBUFFER) {
+            if let Err(reason) =
+                drm::init_from_gop(info.framebuffer.width, info.framebuffer.height)
+            {
+                println!("Display buffer scaffold unavailable: {}", reason);
+            }
+        }
         drm::report();
         partition::enumerate();
         partition::report();
