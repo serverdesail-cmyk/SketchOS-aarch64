@@ -77,7 +77,13 @@ pub fn init(info: &FramebufferInfo) -> Result<(), &'static str> {
         return Err("framebuffer is too small for the text console");
     }
 
-    BASE.store(phys_to_virt(info.address), Ordering::Relaxed);
+    // Keep the global framebuffer disabled until the first scanout clear
+    // succeeds. If the firmware's GOP mapping is stale, the exception path
+    // must not recursively write to the same invalid framebuffer.
+    BASE.store(0, Ordering::Release);
+    let base = phys_to_virt(info.address);
+    clear_region(base, info.size, info.stride, info.height);
+
     SIZE.store(info.size, Ordering::Relaxed);
     WIDTH.store(info.width, Ordering::Relaxed);
     HEIGHT.store(info.height, Ordering::Relaxed);
@@ -87,8 +93,7 @@ pub fn init(info: &FramebufferInfo) -> Result<(), &'static str> {
     ROWS.store(rows, Ordering::Relaxed);
     CURSOR_X.store(0, Ordering::Relaxed);
     CURSOR_Y.store(0, Ordering::Relaxed);
-
-    clear();
+    BASE.store(base, Ordering::Release);
     Ok(())
 }
 
@@ -205,12 +210,15 @@ fn clear_cell(cell_x: u32, cell_y: u32) {
 }
 
 fn clear() {
-    let base = BASE.load(Ordering::Relaxed);
+    let base = BASE.load(Ordering::Acquire);
     let stride = STRIDE.load(Ordering::Relaxed);
     let height = HEIGHT.load(Ordering::Relaxed);
     let size = SIZE.load(Ordering::Relaxed);
-    let row_bytes = stride as u64 * 4;
+    clear_region(base, size, stride, height);
+}
 
+fn clear_region(base: u64, size: u64, stride: u32, height: u32) {
+    let row_bytes = stride as u64 * 4;
     if base == 0 || stride == 0 {
         return;
     }
@@ -220,9 +228,8 @@ fn clear() {
         if offset.saturating_add(row_bytes) > size {
             break;
         }
-        // SAFETY: every 32-bit pixel lies inside the firmware-reported size.
-        // Volatile stores prevent the compiler from eliding writes to the
-        // memory-mapped scanout buffer.
+        // SAFETY: every 32-bit pixel lies inside the validated firmware range.
+        // Volatile stores prevent the compiler from eliding scanout writes.
         unsafe {
             let pixels = row_bytes / 4;
             for column in 0..pixels {
@@ -230,8 +237,7 @@ fn clear() {
             }
         }
     }
-    // Ensure the display engine can observe the cleared scanout buffer before
-    // the kernel starts printing into it.
+    // Ensure the display engine can observe the cleared scanout buffer.
     unsafe { core::arch::asm!("dsb oshst", options(nostack, preserves_flags)) };
 }
 
