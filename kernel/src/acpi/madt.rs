@@ -33,12 +33,15 @@ pub fn parse(table: &Table<'_>, platform: &mut Platform) {
             break;
         }
 
+        // Validate each known structure's minimum ACPI-defined size before
+        // reading fields from its payload. The outer table bounds check alone
+        // does not prevent a short entry from borrowing bytes from the next.
         match kind {
-            TYPE_GICC => parse_gicc(table, offset, platform),
-            TYPE_GICD => parse_gicd(table, offset, platform),
-            TYPE_GICR => parse_gicr(table, offset, platform),
-            TYPE_ITS => parse_its(table, offset, platform),
-            TYPE_MSI_FRAME => platform.gic_msi_frames += 1,
+            TYPE_GICC if entry_length >= 80 => parse_gicc(table, offset, platform),
+            TYPE_GICD if entry_length >= 24 => parse_gicd(table, offset, platform),
+            TYPE_GICR if entry_length >= 16 => parse_gicr(table, offset, platform),
+            TYPE_ITS if entry_length >= 20 => parse_its(table, offset, platform),
+            TYPE_MSI_FRAME if entry_length >= 24 => platform.gic_msi_frames += 1,
             _ => {}
         }
 
