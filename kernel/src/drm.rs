@@ -16,6 +16,7 @@
 //! - Cache-line-aligned (128 B) buffer descriptors to avoid false sharing.
 
 use crate::phys;
+use crate::sync::IrqSpinLock;
 
 pub const MAX_DUMB_BUFFERS: usize = 16;
 
@@ -43,11 +44,7 @@ pub struct DrmDevice {
     pub buffer_count: usize,
 }
 
-static mut DRM: Option<DrmDevice> = None;
-
-pub fn device() -> Option<&'static mut DrmDevice> {
-    unsafe { DRM.as_mut() }
-}
+static DRM: IrqSpinLock<Option<DrmDevice>> = IrqSpinLock::new(None);
 
 /// Initialize the software buffer scaffold from the firmware GOP mode.
 /// Refresh rate is unknown because GOP does not report it through BootInfo;
@@ -61,13 +58,14 @@ pub fn init_from_gop(width: u32, height: u32) -> Result<(), &'static str> {
         buffers: [GemObject { phys_base: 0, size: 0, width: 0, height: 0, pitch: 0, in_use: false }; MAX_DUMB_BUFFERS],
         buffer_count: 0,
     };
-    unsafe { DRM = Some(dev); }
+    *DRM.lock() = Some(dev);
     Ok(())
 }
 
 /// Allocate a dumb buffer of `width x height` at `bpp` bits. Returns its handle index.
 pub fn alloc_dumb(width: u32, height: u32, bpp: u32) -> Result<usize, &'static str> {
-    let dev = device().ok_or("no drm device")?;
+    let mut guard = DRM.lock();
+    let dev = guard.as_mut().ok_or("no display device")?;
     if dev.buffer_count >= MAX_DUMB_BUFFERS {
         return Err("too many buffers");
     }
@@ -92,13 +90,14 @@ pub fn alloc_dumb(width: u32, height: u32, bpp: u32) -> Result<usize, &'static s
 }
 
 pub fn set_mode(mode: Mode) {
-    if let Some(dev) = device() {
+    if let Some(dev) = DRM.lock().as_mut() {
         dev.mode = mode;
     }
 }
 
 pub fn report() {
-    if let Some(dev) = device() {
+    let guard = DRM.lock();
+    if let Some(dev) = guard.as_ref() {
         if dev.mode.refresh_hz == 0 {
             crate::println!(
                 "Display scaffold: GOP {}x{} ({} bpp, refresh unknown), {} dumb buffers; no KMS/Adreno driver",
