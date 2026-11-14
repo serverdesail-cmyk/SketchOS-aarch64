@@ -115,7 +115,10 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
     // Decode ACPI while the loader's bootstrap map is still active. This reads
     // firmware tables in RAM and does not initialize any device.
     println!("ACPI: beginning table discovery");
-    let platform = acpi::discover(&info);
+    let mut platform = acpi::discover(&info);
+    if let Some(platform) = platform.as_mut() {
+        platform.qemu_virt = info.has_flag(FLAG_QEMU_VIRT);
+    }
 
     // Replace the firmware map with kernel-owned tables. A failure is not
     // fatal: the kernel continues under the loader map and reports why.
