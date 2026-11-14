@@ -103,8 +103,9 @@ laptop by SketchOS.
 | 6 | `0x70000000` | 00-01 |
 | 7 | `0x74000000` | 00-01 |
 
-The current enumerator can walk these windows only after the MMU maps them. It has
-not been run on the laptop.
+The current enumerator validates 1 MiB alignment and the complete 512 GiB physmap
+range, then uses fault-contained reads and skips a window if its first ECAM access
+aborts. It has not been run on the laptop.
 
 ## Core platform devices
 
@@ -117,9 +118,18 @@ not been run on the laptop.
 | PSCI | ACPI FADT ARM boot flags; laptop `0x0001` (SMC) | QEMU verified; laptop not invoked | FADT PSCI-compliant flag and conduit; `PSCI_VERSION` | **Verified on QEMU** (`CPU_ON` and `SYSTEM_OFF`) | Use SMC or HVC per FADT; 64-bit `CPU_ON` only for PSCI 0.2+; `SYSTEM_OFF` always uses the 32-bit ID | None | None | `CPU_ON`, `SYSTEM_OFF` | Eight CPUs started and the machine powered off | No `CPU_OFF`, `SUSPEND`, hotplug or affinity-info use; QEMU flag gates power-off |
 | SPCR UART | ACPI SPCR; laptop interface `0x13` at `0x894000`; QEMU interface `0x03` at `0x09000000` | QEMU PL011 verified; laptop GENI path untested | SPCR GAS; interface `0x13` identifies SDM845 7.372 MHz UART programming model | **Verified on QEMU**; laptop **Implemented, untested** | PL011: 24 MHz QEMU clock; GENI: verify UART firmware protocol and FIFO mode, reuse firmware baud/clock configuration | GENI early console is polling-only; laptop GSIV 386 is not enabled | None | QUP clock/power state must already be enabled by firmware | QEMU serial log; no laptop GENI capture yet | No RX, no GENI firmware loading, no QUP clock/power/reset management; firmware must leave the UART engine initialized |
 | DBG2 debug ports | ACPI DBG2; laptop 7 entries including `\_SB.UARD` | None | DBG2 | **Decoded only** | Namespace and GAS parsing | GSIV from DBG2/SPCR | None | None | Not tested | No debug-port driver |
-| PCIe root complexes | ACPI `PNP0A08` (two on laptop) | None | MCFG ECAM windows; ACPI namespace | **Enumerated only** | Map ECAM; walk buses; assign BARs | MSI/MSI-X/INTx | Requires IOMMU for safe DMA | PCIe power/clock control | QEMU ECAM walk; laptop not run | No BAR assignment, no config writes, no hotplug, no power management |
+| PCIe root complexes | ACPI `PNP0A08` (two on laptop) | None | MCFG ECAM windows; ACPI namespace | **Enumerated only** | MCFG windows are alignment/range-checked; ECAM reads are fault-contained; BAR assignment remains unimplemented | MSI/MSI-X/INTx | Requires IOMMU for safe DMA | PCIe power/clock control | QEMU ECAM walk; laptop not run | No BAR assignment, no config writes, no hotplug, no power management; root-complex power sequencing still needs AML |
 | TPM 2.0 | ACPI TPM2; laptop control area `0x81f10000`, start method 14 | None | TPM2 table; CRB or FIFO interface | **Decoded only** | Map control area; follow start method; command interface | None | None | None | Not tested | No TPM command driver |
 | BGRT | ACPI BGRT; laptop image `0xcfdaa018` | None | BGRT | **Decoded only** | Parse image header; map image | None | None | None | Not displayed | No boot-logo rendering |
+
+## QEMU-only transport isolation
+
+The VirtIO-MMIO aperture beginning at physical `0x0a000000` belongs to the QEMU
+`virt` machine. The storage and network probes now run only when the loader sets
+`FLAG_QEMU_VIRT`. On the Snapdragon path they are skipped entirely; no read, queue
+setup, DRIVER_OK write or DMA enable is attempted at that address. Physical storage
+and networking must be discovered through the laptop's ACPI/PCI resources and real
+controller drivers.
 
 ## Laptop device matrix
 
