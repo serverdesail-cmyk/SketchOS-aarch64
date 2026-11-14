@@ -278,7 +278,11 @@ pub mod virtio {
 
 pub use virtio::VirtioMmioBlock;
 
-pub fn probe() {
+/// Probe the QEMU virt machine's fixed VirtIO-MMIO slot range.
+///
+/// This address range is not a generic AArch64 device bus. Never call this on
+/// physical hardware; platform devices must be discovered from ACPI/PCI first.
+pub fn probe_qemu_virtio_mmio() {
     let mut base = 0x0a00_0000u64;
     for _ in 0..32 {
         if let Some(dev) = VirtioMmioBlock::probe(base) {
