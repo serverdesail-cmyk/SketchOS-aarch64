@@ -4,15 +4,22 @@
 //! inode table, root directory with "." and "..". Read support: list root
 //! directory entries and read a file by name.
 
-use crate::storage::{self, BlockDevice, SECTOR_SIZE};
+use crate::storage::{self, SECTOR_SIZE};
 
 const BLOCK_SIZE: u32 = 1024;
 const INODE_SIZE: u32 = 128;
 const INODES_PER_GROUP: u32 = 8192;
 const BLOCKS_PER_GROUP: u32 = 8192;
 
-pub fn format(start_lba: u64, num_sectors: u64) -> Result<(), &'static str> {
-    let dev = storage::device().ok_or("no block device")?;
+pub fn format_qemu_test_disk(
+    start_lba: u64,
+    num_sectors: u64,
+    qemu_virt: bool,
+) -> Result<(), &'static str> {
+    if !qemu_virt {
+        return Err("experimental ext2 formatter is disabled on physical hardware");
+    }
+    storage::capacity_sectors().ok_or("no block device")?;
     let total_blocks = (num_sectors * 512 / BLOCK_SIZE as u64) as u32;
     if total_blocks < 64 { return Err("partition too small"); }
 
@@ -63,7 +70,7 @@ pub fn format(start_lba: u64, num_sectors: u64) -> Result<(), &'static str> {
     let mut sec = [0u8; SECTOR_SIZE];
     // sector 0 of superblock (offset 1024 = sector 2 of partition): first 512 bytes of sb
     for i in 0..512 { sec[i] = sb[i]; }
-    dev.write(sb_sector, &sec).map_err(|_| "write sb0")?;
+    storage::write_sector(sb_sector, &sec).map_err(|_| "write sb0")?;
     for i in 0..512 { sec[i] = sb[512 + i]; }
     dev.write(sb_sector + 1, &sec).map_err(|_| "write sb1")?;
 
