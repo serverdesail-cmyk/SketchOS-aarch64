@@ -133,7 +133,9 @@ pub unsafe fn set_user_fault_hook(hook: Option<UserFaultHook>) {
     USER_FAULT_HOOK.store(address, Ordering::Release);
 }
 
-/// Set while the kernel executes a [`probe_read`]/[`probe_write`] sequence.
+/// Global early-boot probe state. Probes are single-core and non-reentrant;
+/// callers must serialize them and keep IRQs masked until a per-core probe
+/// context replaces this bootstrap mechanism.
 static PROBE_ACTIVE: AtomicBool = AtomicBool::new(false);
 /// Address the exception handler resumes a faulting probe at.
 static PROBE_RESUME: AtomicU64 = AtomicU64::new(0);
