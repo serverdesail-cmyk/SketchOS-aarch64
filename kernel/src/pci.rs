@@ -313,32 +313,33 @@ fn config_address(
 
 fn read8(window: &Mcfg, bus: u8, device: u8, function: u8, offset: u16) -> u8 {
     match config_address(window, bus, device, function, offset) {
-        // SAFETY: the address is inside an MCFG window that the MMU mapped
-        // Device-nGnRnE through the physmap, and the offset is naturally
-        // aligned for the width.
-        Some(address) => unsafe {
-            core::ptr::read_volatile(sketchos_bootinfo::phys_to_virt(address) as *const u8)
-        },
+        // The ECAM window is firmware-described and bounds-checked, but the
+        // root complex may still be powered down. Contain an external abort
+        // instead of allowing a speculative inventory read to kill the core.
+        Some(address) => crate::arch::aarch64::probe_read8(
+            sketchos_bootinfo::phys_to_virt(address) as u64,
+        )
+        .unwrap_or(0xff),
         None => 0xff,
     }
 }
 
 fn read16(window: &Mcfg, bus: u8, device: u8, function: u8, offset: u16) -> u16 {
     match config_address(window, bus, device, function, offset) {
-        // SAFETY: see `read8`.
-        Some(address) => unsafe {
-            core::ptr::read_volatile(sketchos_bootinfo::phys_to_virt(address) as *const u16)
-        },
+        Some(address) => crate::arch::aarch64::probe_read16(
+            sketchos_bootinfo::phys_to_virt(address) as u64,
+        )
+        .unwrap_or(0xffff),
         None => 0xffff,
     }
 }
 
 fn read32(window: &Mcfg, bus: u8, device: u8, function: u8, offset: u16) -> u32 {
     match config_address(window, bus, device, function, offset) {
-        // SAFETY: see `read8`.
-        Some(address) => unsafe {
-            core::ptr::read_volatile(sketchos_bootinfo::phys_to_virt(address) as *const u32)
-        },
+        Some(address) => crate::arch::aarch64::probe_read32(
+            sketchos_bootinfo::phys_to_virt(address) as u64,
+        )
+        .unwrap_or(0xffff_ffff),
         None => 0xffff_ffff,
     }
 }
