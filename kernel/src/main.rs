@@ -330,27 +330,35 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
     if let Err(reason) = selftest::heap_test() {
         fatal(&info, Some(platform), reason);
     }
-        if info.has_flag(FLAG_QEMU_VIRT) {
-            storage::probe_qemu_virtio_mmio();
-            net::probe_qemu_virtio_mmio();
-        } else {
-            // 0x0a000000 is a QEMU virtio-mmio aperture, not a generic
-            // AArch64 bus. Do not touch it on the Snapdragon laptop.
-            println!("Storage: QEMU VirtIO-MMIO probe skipped on physical hardware");
-            println!("Net: QEMU VirtIO-MMIO probe skipped on physical hardware");
+    if info.has_flag(FLAG_QEMU_VIRT) {
+        storage::probe_qemu_virtio_mmio();
+        net::probe_qemu_virtio_mmio();
+    } else {
+        // 0x0a000000 is a QEMU virtio-mmio aperture, not a generic
+        // AArch64 bus. Do not touch it on the Snapdragon laptop.
+        println!("Storage: QEMU VirtIO-MMIO probe skipped on physical hardware");
+        println!("Net: QEMU VirtIO-MMIO probe skipped on physical hardware");
+    }
+    storage::report();
+    if info.has_flag(FLAG_FRAMEBUFFER) {
+        if let Err(reason) = drm::init_from_gop(info.framebuffer.width, info.framebuffer.height) {
+            println!("Display buffer scaffold unavailable: {}", reason);
         }
-        if info.has_flag(FLAG_FRAMEBUFFER) {
-            if let Err(reason) =
-                drm::init_from_gop(info.framebuffer.width, info.framebuffer.height)
-            {
-                println!("Display buffer scaffold unavailable: {}", reason);
+    }
+    drm::report();
+    partition::enumerate();
+    partition::report();
+    nvme::probe_and_report();
+    if info.has_flag(FLAG_QEMU_VIRT) {
+        match fat32::Fat32::mount() {
+            Ok(filesystem) => {
+                if let Err(reason) = filesystem.list_root() {
+                    println!("FAT32: root listing failed: {}", reason);
+                }
             }
+            Err(reason) => println!("FAT32: not mounted: {}", reason),
         }
-        drm::report();
-        partition::enumerate();
-        partition::report();
-        nvme::probe_and_report();
-        let _ = fat32::Fat32::mount();
+    }
 
     // Discover every enabled MADT processor and install this core's per-core
     // pointer before the GIC or the scheduler needs it.
