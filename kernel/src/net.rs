@@ -24,7 +24,6 @@ pub mod virtio_net {
     #[derive(Clone, Copy)]
     pub struct VirtioNet {
         pub mac: Mac,
-        base: u64,
     }
 
     impl VirtioNet {
@@ -60,7 +59,7 @@ pub mod virtio_net {
                 base,
                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
             );
-            Some(Self { mac: Mac(mac), base })
+            Some(Self { mac: Mac(mac) })
         }
     }
 }
