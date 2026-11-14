@@ -70,6 +70,11 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
     // Install the fault table before touching any device.
     let vectors = arch::aarch64::install_exception_vectors();
 
+    // Initialize a supported serial console first, then the GOP framebuffer.
+    if info.has_flag(FLAG_UART) && info.uart_kind == uart_kind::PL011 {
+        console::init(info.uart_base);
+    }
+
     // The loader already mapped the GOP buffer in the bootstrap physical map.
     // Initialize it before ACPI discovery and before replacing the page tables,
     // so failures in either stage remain visible on hardware without PL011.
@@ -83,10 +88,6 @@ pub extern "C" fn kmain(boot_info_addr: u64, entry_el: u64) -> ! {
                 println!("Early framebuffer console unavailable: {}", reason);
             }
         }
-    }
-
-    if info.has_flag(FLAG_UART) && info.uart_kind == uart_kind::PL011 {
-        console::init(info.uart_base);
     }
 
     println!();
