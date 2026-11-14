@@ -138,39 +138,33 @@ pub fn report_boot_cpu_state() {
         let hcr: u64;
         let cptr: u64;
         let cnthctl: u64;
-        let icc_sre: u64;
         unsafe {
             core::arch::asm!("mrs {v}, SCTLR_EL2", v = out(reg) sctlr, options(nomem, nostack, preserves_flags));
             core::arch::asm!("mrs {v}, HCR_EL2", v = out(reg) hcr, options(nomem, nostack, preserves_flags));
             core::arch::asm!("mrs {v}, CPTR_EL2", v = out(reg) cptr, options(nomem, nostack, preserves_flags));
             core::arch::asm!("mrs {v}, CNTHCTL_EL2", v = out(reg) cnthctl, options(nomem, nostack, preserves_flags));
-            core::arch::asm!("mrs {v}, ICC_SRE_EL2", v = out(reg) icc_sre, options(nomem, nostack, preserves_flags));
         }
         uefi::println!(
-            "EL2 state: SCTLR 0x{:016x} HCR 0x{:016x} CPTR 0x{:016x} CNTHCTL 0x{:016x} ICC_SRE 0x{:016x}",
+            "EL2 state: SCTLR 0x{:016x} HCR 0x{:016x} CPTR 0x{:016x} CNTHCTL 0x{:016x}",
             sctlr,
             hcr,
             cptr,
-            cnthctl,
-            icc_sre
+            cnthctl
         );
     } else if entry_el == 1 {
         let sctlr: u64;
         let cpacr: u64;
         let vbar: u64;
-        let icc_sre: u64;
         unsafe {
             core::arch::asm!("mrs {v}, SCTLR_EL1", v = out(reg) sctlr, options(nomem, nostack, preserves_flags));
             core::arch::asm!("mrs {v}, CPACR_EL1", v = out(reg) cpacr, options(nomem, nostack, preserves_flags));
             core::arch::asm!("mrs {v}, VBAR_EL1", v = out(reg) vbar, options(nomem, nostack, preserves_flags));
-            core::arch::asm!("mrs {v}, ICC_SRE_EL1", v = out(reg) icc_sre, options(nomem, nostack, preserves_flags));
         }
         uefi::println!(
-            "EL1 state: SCTLR 0x{:016x} CPACR 0x{:016x} VBAR 0x{:016x} ICC_SRE 0x{:016x}",
+            "EL1 state: SCTLR 0x{:016x} CPACR 0x{:016x} VBAR 0x{:016x}",
             sctlr,
             cpacr,
-            vbar,
-            icc_sre
+            vbar
         );
         uefi::println!("EL2 controls, if implemented, are firmware-owned at EL1 entry");
     } else {
