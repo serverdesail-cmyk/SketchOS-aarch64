@@ -180,3 +180,30 @@ Keep enumeration read-only until host-bridge windows, BAR allocation, bridge set
 - Physical boot is the acceptance test for this target.
 - Do not enable a DMA-capable device until its reset, interrupt and SMMU path is understood.
 - Do not mark a device supported until it has been initialized and exercised on the HP OmniBook X.
+
+
+### P1 — Direct EL1 entry does not establish all EL2-controlled access required by the kernel
+
+**Evidence in source**
+- The EL2 entry path clears `CPTR_EL2.TFP` and enables `ICC_SRE_EL2.SRE/Enable` before dropping to EL1.
+- The direct EL1 path only sets `CPACR_EL1.FPEN`; it cannot configure `CPTR_EL2` or `ICC_SRE_EL2`.
+- The Linux arm64 entry requirements explicitly require `CPTR_EL2.TFP=0` and, for GICv3 system-register mode, `ICC_SRE_EL2.SRE=1` and `ICC_SRE_EL2.Enable=1` when EL2 is present and the kernel enters at EL1.
+
+**Impact**
+The direct-EL1 path is not self-contained on a platform where EL2 exists and firmware has not already established those controls. The exception vectors save Q registers, so a trapped FP/SIMD access can fail inside the exception handler itself. GIC system-register accesses can also trap or be unavailable.
+
+**Required change**
+Specify these as explicit loader/firmware preconditions for direct EL1 entry and verify them where architecturally readable. If they cannot be guaranteed, use the EL2 entry path and perform the setup there. Do not claim the direct-EL1 path is portable until this contract is met.
+
+### P1 — The installed EL2 vector table uses an EL1-only return path
+
+**Evidence in source**
+- `boot.S` installs `exception_vectors` into both `VBAR_EL1` and `VBAR_EL2` before the EL2-to-EL1 transition.
+- `vectors.S::save_system_registers` distinguishes EL1/EL2/EL3 when saving syndrome registers.
+- `vectors.S::restore_frame` always writes `ELR_EL1` and `SPSR_EL1`, then executes `eret`. It is therefore an EL1 return path, not a valid EL2 exception return path.
+
+**Impact**
+A synchronous exception while still executing at EL2 can enter this table, but the common return path restores the wrong exception-level bank. This can turn an early diagnostic exception into a second fault or an uncontrolled return.
+
+**Required change**
+Use a dedicated minimal EL2 early-fault vector that records `ESR_EL2`, `ELR_EL2`, `FAR_EL2` and parks, or implement a fully EL-aware save/restore path. Keep the general scheduler/context-switch vectors EL1-only and install them only after the kernel is running at EL1.
